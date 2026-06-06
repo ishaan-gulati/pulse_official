@@ -1,0 +1,88 @@
+---
+description: Pulse app architecture, features, and conventions (simvest/)
+alwaysApply: true
+---
+
+# Pulse — Social Mock Trading App
+
+**Root:** `simvest/` · **Package:** `pulse` v1.0.3 · **Bundle:** `com.pulse.app` · **Firebase:** `pulse-app-real`
+
+Mobile-first social paper-trading for Gen Z. Users get **$10,000 virtual cash**, trade at real market prices, compete on a leaderboard, and share ideas in a feed. No real money.
+
+## Stack
+
+- **Frontend:** React Native 0.81 + Expo 54, React 19, TypeScript
+- **Backend:** Firebase Auth (email/password) + Firestore
+- **Quotes/charts:** Yahoo Finance chart API (primary, 60s cache)
+- **Search/news:** Finnhub (client rate limiting in `finnhubRateLimit.ts`)
+- **AI:** Groq `llama-3.1-8b-instant` via `aiExplainService.ts` (keys in `src/config/apiKeys.ts`)
+- **Functions:** Firebase Cloud Functions v2 — `onReferralClaimCreated` pays referrers
+
+## Navigation (custom tabs, no React Navigation)
+
+`App.tsx` owns state. Tabs via `BottomNavbar`: **home**, **search**, **leaderboard**, **portfolio**, **profile**. Overlays: post detail, user profile, settings, notifications (price alerts), post-signup onboarding.
+
+Auth: `LoginScreen` → optional `PostSignupOnboardingScreen` (`onboardingCompleted === false`) → main app. Login accepts email or username (`loginUsernames` collection). Wrapped in `AuthProvider` + `VersionGate` (Firestore `appConfig` min version).
+
+## Firestore model
+
+```
+users/{uid}                    — profile, cash, XP, level, achievements, tags
+  portfolio/{symbol}           — positions
+  tradingHistory/{id}          — buy/sell records
+  priceAlerts/{id}             — above/below alerts
+  portfolioSnapshots/{id}      — performance chart history
+  blockedUsers/{blockedId}
+posts/{postId}                 — feed (likes, saves, reposts, $TICKER tags)
+  comments/{commentId}
+loginUsernames/{usernameKey}   — username → email (pre-auth lookup)
+referralCodes/{code}           — code → referrer UID
+referrals/{uid}                — referrer stats
+referralClaims/{claimId}       — pending payouts (Cloud Function processes)
+appConfig/{docId}              — min version, store URLs (read-only)
+```
+
+**Portfolio math:** `totalPortfolioValue = cash + sum(positions.totalValue)`. Starting cash: **$10,000** (`STARTING_CASH` in `src/constants/theme.ts`).
+
+## Key features (implemented)
+
+- **Trading:** buy/sell via `tradingService.ts`, no fees, weighted avg cost
+- **Feed:** posts with ticker auto-detect, like/save/repost/comment, block/report
+- **Gamification:** XP (+10/trade, +25/winning sell), 15 levels, achievements (`gamificationService.ts`)
+- **Leaderboard:** top 100 by `totalReturn` (`userService.getLeaderboard`)
+- **Referrals:** +$200 new user & referrer; claims → Cloud Function payout
+- **Price alerts:** polled every 50s in `App.tsx`; bell badge for unacknowledged hits
+- **AI explain:** stock (Search) + portfolio (12/day limit)
+- **Settings:** portfolio reset to $10k, privacy toggle, account deletion
+
+## Services (`src/services/`)
+
+`userService`, `tradingService`, `stockPriceService`, `chartDataService`, `stockSearchService`, `marketDataService`, `postsService`, `gamificationService`, `referralService`, `priceAlertsService`, `aiExplainService`, `blockService`, `notificationService`, `appVersionService`, `accountDeletionService`
+
+## UI theme
+
+Dark-first: bg `#0F1419`, primary `#8B5CF6`, success `#10B981`, error `#EF4444`. Tokens in `src/constants/theme.ts`.
+
+## Not implemented / placeholder
+
+- `ChatsScreen` — mock data only, not in nav
+- Following feed tab — type exists, not built
+- Seasonal leaderboard — all-time only
+- README is outdated (lists built features as "planned")
+
+## Key entry files
+
+| File | Role |
+|------|------|
+| `simvest/App.tsx` | Root nav, alert polling, referral processing |
+| `simvest/src/contexts/AuthContext.tsx` | Auth state |
+| `simvest/src/types/index.ts` | Shared types |
+| `simvest/firestore.rules` | Security rules |
+| `simvest/src/config/firebase.ts` | Firebase + AsyncStorage session persistence |
+
+## Conventions
+
+- Match existing service/class patterns; minimal diffs
+- Username login via `loginUsernames`; referral bonus constants must stay in sync with `functions/index.js`
+- Stock prices: prefer `stockPriceService` (Yahoo); don't add unnecessary API layers
+- Firestore rules changes: deploy via `npm run deploy:firestore-rules`
