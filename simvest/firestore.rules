@@ -1,0 +1,216 @@
+rules_version = '2';
+service cloud.firestore {
+  // Only allow comment counter to move by ±1 (add/delete comment); treat missing as 0.
+  function commentCountDeltaOk(oldVal, newVal) {
+    let old = oldVal == null ? 0 : oldVal;
+    return newVal is number && newVal >= 0 && (newVal == old + 1 || newVal == old - 1);
+  }
+
+  match /databases/{database}/documents {
+    // Username → email for email/password sign-in before the user is authenticated.
+    // Document ID = lowercase trimmed username; only { uid, email, username }.
+    match /loginUsernames/{usernameKey} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && request.auth.token.email != null
+        && request.resource.data.email == request.auth.token.email;
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // Users can read and write their own profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Allow reading other users' public profile data for leaderboard
+      allow read: if request.auth != null;
+    }
+    
+    // Portfolio - PUBLIC: anyone can read, users can write their own
+    match /users/{userId}/portfolio/{document=**} {
+      allow read: if request.auth != null; // Public to all authenticated users
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Trading history - PUBLIC: anyone can read, users can write their own
+    match /users/{userId}/tradingHistory/{document=**} {
+      allow read: if request.auth != null; // Public to all authenticated users
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Price alerts - users can only read/write their own
+    match /users/{userId}/priceAlerts/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Portfolio snapshots - users can only read/write their own
+    match /users/{userId}/portfolioSnapshots/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Posts collection - social feed
+    match /posts/{postId} {
+      // Anyone authenticated can read posts
+      allow read: if request.auth != null;
+      // Users can create their own posts
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      // Users can update likes/saves/reposts on any post; comment count +1/-1 by anyone (add/delete comment);
+      // post owner can edit full post
+      allow update: if request.auth != null && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likedBy', 'saves', 'likes', 'savedBy', 'reposts', 'repostedBy']) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['comments']) &&
+          commentCountDeltaOk(resource.data.comments, request.resource.data.comments)) ||
+        resource.data.userId == request.auth.uid
+      );
+      // Only post owner can delete
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Post comments - create as self only; delete own comment only
+    match /posts/{postId}/comments/{commentId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Reports - users can create; read/delete restricted (e.g. admin only later)
+    match /reports/{reportId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if false;
+    }
+
+    // Blocked users - each user can read/write their own block list
+    match /users/{userId}/blockedUsers/{blockedId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Referral code lookup (document ID = code). No list - avoids scraping all codes.
+    match /referralCodes/{code} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create, update: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // Per-user referral stats (referrer only)
+    match /referrals/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Pending payout: created by invitee; deleted by referrer after crediting (or by Cloud Function).
+    // When the doc is already deleted, resource is null - rules must allow read/delete so clients
+    // don't get permission-denied on get() after the claim was processed server-side.
+    match /referralClaims/{claimId} {
+      allow create: if request.auth != null
+        && request.resource.data.newUserUid == request.auth.uid
+        && request.resource.data.referrerUid != request.resource.data.newUserUid
+        && request.resource.data.processed == false
+        && request.resource.data.keys().hasAll(['newUserUid', 'referrerUid', 'code', 'processed']);
+      allow read: if request.auth != null
+        && (resource == null
+            || resource.data.referrerUid == request.auth.uid
+            || resource.data.newUserUid == request.auth.uid);
+      allow delete: if request.auth != null
+        && (resource == null || resource.data.referrerUid == request.auth.uid);
+      allow update: if false;
+    }
+    
+    // Social graph: follows
+    // Doc ID = "{followerId}_{followedId}". Anyone authed can read; only the follower can create/delete.
+    match /follows/{docId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.followerId == request.auth.uid
+        && request.resource.data.followedId != request.auth.uid;
+      allow delete: if request.auth != null && resource.data.followerId == request.auth.uid;
+      allow update: if false;
+      allow list: if request.auth != null;
+    }
+
+    // Friend requests
+    match /friendRequests/{requestId} {
+      allow read: if request.auth != null
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow list: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if request.auth != null
+        && resource.data.toUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      allow delete: if request.auth != null
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+    }
+
+    // Friends (accepted, bidirectional subcollection per user)
+    match /friends/{uid}/accepted/{friendUid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+        && (request.auth.uid == uid || request.auth.uid == friendUid);
+      allow list: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Groups
+    match /groups/{groupId} {
+      allow read: if request.auth != null
+        && (resource == null || resource.data.members.hasAny([request.auth.uid]));
+      allow list: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.members.hasAll([request.auth.uid]);
+      allow update: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid
+        || (
+          resource.data.createdBy != request.auth.uid
+          && resource.data.members.hasAny([request.auth.uid])
+          && !request.resource.data.members.hasAny([request.auth.uid])
+          && request.resource.data.members.size() == resource.data.members.size() - 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+        )
+        || (
+          resource.data.members.hasAny([request.auth.uid])
+          && request.resource.data.members.size() == resource.data.members.size() + 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+        )
+        || (
+          !resource.data.members.hasAny([request.auth.uid])
+          && request.resource.data.members.hasAny([request.auth.uid])
+          && request.resource.data.members.size() == resource.data.members.size() + 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+        )
+      );
+      allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
+    }
+
+    // Group messages — members of the group only
+    match /groups/{groupId}/messages/{msgId} {
+      allow read, list: if request.auth != null
+        && get(/databases/$(database)/documents/groups/$(groupId)).data.members.hasAny([request.auth.uid]);
+      allow create: if request.auth != null
+        && get(/databases/$(database)/documents/groups/$(groupId)).data.members.hasAny([request.auth.uid])
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Public collections (if you add them later)
+    match /public/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only admins can write to public collections
+    }
+
+    // Client app version gate (min version, store URLs). Read-only for clients; edit in Console only.
+    match /appConfig/{docId} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+    
+    // Default: deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+} 

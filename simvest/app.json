@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "pulse",
+    "slug": "pulse",
+    "version": "1.0.3",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "scheme": "pulse",
+    "splash": {
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pulse.app",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "pulse-auth",
+            "CFBundleURLSchemes": ["pulse"]
+          }
+        ]
+      }
+    },
+    "android": {
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.pulse.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "pulse"
+          }
+        }
+      ]
+    },
+    "web": {},
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pulse uses your photo library so you can set a profile picture."
+        }
+      ]
+    ]
+  }
+}
