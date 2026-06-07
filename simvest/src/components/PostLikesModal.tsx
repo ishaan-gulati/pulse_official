@@ -7,12 +7,16 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
+  Pressable,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { postsService } from '../services/postsService';
 import { UserProfile } from '../services/userService';
-import { Colors, Spacing, Typography, Glass } from '../constants/theme';
+import { Colors, Spacing, BorderRadius, Typography, Glass } from '../constants/theme';
 import UserAvatar from './UserAvatar';
+
+const SHEET_MAX_HEIGHT = Math.min(Dimensions.get('window').height * 0.52, 420);
 
 type PostLikesModalProps = {
   visible: boolean;
@@ -41,54 +45,67 @@ const PostLikesModal: React.FC<PostLikesModalProps> = ({ visible, postId, onClos
   }, [visible, postId]);
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Likes</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Ionicons name="close" size={24} color={Colors.textPrimary} />
-          </TouchableOpacity>
-        </View>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+          <View style={styles.header}>
+            <Text style={styles.title}>Likes</Text>
+            {!loading && profiles.length > 0 ? (
+              <Text style={styles.count}>{profiles.length}</Text>
+            ) : null}
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={onClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="close" size={20} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
 
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-          </View>
-        ) : profiles.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>No likes yet</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={profiles}
-            keyExtractor={(item) => item.uid}
-            contentContainerStyle={styles.list}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.row}
-                onPress={() => {
-                  onClose();
-                  onViewUser?.(item.uid);
-                }}
-                activeOpacity={0.75}
-              >
-                <UserAvatar
-                  photoURL={item.photoURL}
-                  displayName={item.displayName}
-                  username={item.username}
-                  size={44}
-                />
-                <View style={styles.nameBlock}>
-                  <Text style={styles.displayName} numberOfLines={1}>
-                    {item.displayName || item.username}
-                  </Text>
-                  <Text style={styles.username}>@{item.username}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
-              </TouchableOpacity>
-            )}
-          />
-        )}
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+            </View>
+          ) : profiles.length === 0 ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>No likes yet</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={profiles}
+              keyExtractor={(item) => item.uid}
+              style={styles.list}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.row}
+                  onPress={() => {
+                    onClose();
+                    onViewUser?.(item.uid);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <UserAvatar
+                    photoURL={item.photoURL}
+                    displayName={item.displayName}
+                    username={item.username}
+                    size={40}
+                  />
+                  <View style={styles.nameBlock}>
+                    <Text style={styles.displayName} numberOfLines={1}>
+                      {item.displayName || item.username}
+                    </Text>
+                    <Text style={styles.username} numberOfLines={1}>@{item.username}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                </TouchableOpacity>
+              )}
+            />
+          )}
+        </View>
       </View>
     </Modal>
   );
@@ -97,55 +114,87 @@ const PostLikesModal: React.FC<PostLikesModalProps> = ({ visible, postId, onClos
 export default PostLikesModal;
 
 const styles = StyleSheet.create({
-  container: {
+  overlay: {
     flex: 1,
-    backgroundColor: Colors.background,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  sheet: {
+    maxHeight: SHEET_MAX_HEIGHT,
+    backgroundColor: '#161B22',
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: Glass.postBorder,
+    paddingBottom: Spacing.lg,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: 'rgba(139,92,246,0.12)',
   },
   title: {
+    flex: 1,
     fontSize: Typography.fontSize.lg,
     fontWeight: Typography.fontWeight.bold,
     color: Colors.textPrimary,
   },
+  count: {
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+    color: Colors.textTertiary,
+    marginRight: Spacing.sm,
+  },
+  closeBtn: {
+    padding: 4,
+  },
   center: {
-    flex: 1,
-    justifyContent: 'center',
+    paddingVertical: Spacing.xl,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyText: {
     color: Colors.textTertiary,
     fontSize: Typography.fontSize.md,
   },
   list: {
-    padding: Spacing.md,
-    gap: Spacing.sm,
+    flexGrow: 0,
+  },
+  listContent: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.xs,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-    paddingVertical: Spacing.xs,
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Glass.primaryTint,
-    borderWidth: 1,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: 'rgba(139,92,246,0.05)',
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Glass.postBorder,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   nameBlock: {
     flex: 1,
+    minWidth: 0,
   },
   displayName: {
     fontSize: Typography.fontSize.md,
@@ -155,5 +204,6 @@ const styles = StyleSheet.create({
   username: {
     fontSize: Typography.fontSize.sm,
     color: Colors.textSecondary,
+    marginTop: 1,
   },
 });

@@ -26,9 +26,10 @@ const MOCK_LEADERBOARD: LeaderboardEntry[] = [
 type LeaderboardScreenProps = {
   onViewUser?: (uid: string) => void;
   listRef?: React.RefObject<import('react-native').FlatList<LeaderboardEntry> | null>;
+  onAppRefresh?: () => Promise<void>;
 };
 
-const LeaderboardScreen: React.FC<LeaderboardScreenProps> = ({ onViewUser, listRef }) => {
+const LeaderboardScreen: React.FC<LeaderboardScreenProps> = ({ onViewUser, listRef, onAppRefresh }) => {
   const { user } = useAuth();
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,12 +52,17 @@ const LeaderboardScreen: React.FC<LeaderboardScreenProps> = ({ onViewUser, listR
     fetchLeaderboard();
   }, []);
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    userService.getLeaderboard(LEADERBOARD_LIMIT)
-      .then(setEntries)
-      .catch((err) => console.error('Leaderboard refresh error:', err))
-      .finally(() => setRefreshing(false));
+    try {
+      await onAppRefresh?.();
+      const data = await userService.getLeaderboard(LEADERBOARD_LIMIT);
+      setEntries(data);
+    } catch (err) {
+      console.error('Leaderboard refresh error:', err);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const displayList = entries.length > 0 ? entries : MOCK_LEADERBOARD;

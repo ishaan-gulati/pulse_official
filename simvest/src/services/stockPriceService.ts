@@ -113,11 +113,11 @@ class StockPriceService {
   }
 
   /**
-   * Get quotes for multiple stocks - all fired in parallel, no artificial delay.
+   * Get quotes for multiple stocks - all fired in parallel via chart API, served from cache when fresh.
    */
   async getQuotes(symbols: string[]): Promise<Map<string, StockQuote>> {
     const results = await Promise.all(
-      symbols.map(async symbol => {
+      symbols.map(async (symbol) => {
         const quote = await this.fetchYahooQuote(symbol);
         return quote ? { symbol: symbol.toUpperCase(), quote } : null;
       })

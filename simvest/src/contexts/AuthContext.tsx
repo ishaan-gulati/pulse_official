@@ -7,6 +7,7 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   deleteUser,
+  updateProfile,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
@@ -18,7 +19,43 @@ type AuthUser = {
   uid: string;
   email?: string | null;
   displayName?: string | null;
+  username?: string | null;
 };
+
+function authUserFromFirebase(firebaseUser: FirebaseUser): AuthUser {
+  return {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: firebaseUser.displayName?.trim() || null,
+    username: null,
+  };
+}
+
+async function hydrateAuthUser(firebaseUser: FirebaseUser): Promise<AuthUser> {
+  let profile = null as Awaited<ReturnType<typeof userService.getUserProfile>>;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    profile = await userService.getUserProfile(firebaseUser.uid);
+    if (profile?.displayName?.trim() || profile?.username?.trim()) break;
+    if (attempt < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+  return {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: profile?.displayName?.trim() || firebaseUser.displayName?.trim() || null,
+    username: profile?.username?.trim() || null,
+  };
+}
+
+function mergeAuthUser(prev: AuthUser | null, next: AuthUser): AuthUser {
+  if (!prev || prev.uid !== next.uid) return next;
+  return {
+    ...next,
+    displayName: next.displayName?.trim() || prev.displayName?.trim() || null,
+    username: next.username?.trim() || prev.username?.trim() || null,
+  };
+}
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -38,13 +75,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
-        // Referrer payout: process any pending referralClaims as soon as session is ready (cold open).
+        // Restore session immediately so we don't flash LoginScreen while Firestore hydrates.
+        setUser((prev) => mergeAuthUser(prev, authUserFromFirebase(firebaseUser)));
         referralService.processPendingReferralClaims(firebaseUser.uid).catch(() => {});
-        setUser({
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-        });
+        void hydrateAuthUser(firebaseUser).then((next) => setUser((prev) => mergeAuthUser(prev, next)));
       } else {
         setUser(null);
       }
@@ -81,6 +115,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {
         // User is signed in; profile touch is best-effort
       }
+
+      const hydrated = await hydrateAuthUser(result.user);
+      setUser((prev) => mergeAuthUser(prev, hydrated));
     } catch (error: unknown) {
       if (error instanceof UsernameLookupError) {
         throw error;
@@ -112,15 +149,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signup = async (email: string, password: string, username: string, displayName: string, referralCode?: string) => {
     try {
+      const trimmedName = displayName.trim();
+      const trimmedUsername = username.trim();
       const result = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Create user profile in Firestore
+
+      await updateProfile(result.user, { displayName: trimmedName });
+
+      // Create user profile in Firestore before hydrating UI
       await userService.createUserProfile(result.user.uid, {
-        username,
-        displayName,
+        username: trimmedUsername,
+        displayName: trimmedName,
         email,
-        totalPortfolioValue: 10000, // Start with $10k
-        totalReturn: 0
+        totalPortfolioValue: 10000,
+        totalReturn: 0,
       });
 
       referralService.getReferralCode(result.user.uid).catch(() => {});
@@ -135,7 +176,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Referral code could not be applied:', refErr);
         }
       }
-      
+
+      const hydrated = await hydrateAuthUser(result.user);
+      setUser((prev) => mergeAuthUser(prev, hydrated));
+
       console.log('User account and profile created successfully!');
     } catch (error: any) {
       let message = 'Failed to create account';

@@ -50,6 +50,7 @@ export interface PostComment {
   userId: string;
   username: string;
   displayName: string;
+  photoURL?: string;
   text: string;
   createdAt: number; // milliseconds
 }
@@ -491,7 +492,7 @@ class PostsService {
         firestoreLimit(limitCount)
       );
       const snapshot = await getDocs(q);
-      return snapshot.docs.map((docSnap) => {
+      const raw = snapshot.docs.map((docSnap) => {
         const d = docSnap.data();
         const createdAt = d.createdAt?.toMillis?.() ?? Date.now();
         return {
@@ -499,10 +500,27 @@ class PostsService {
           userId: d.userId ?? '',
           username: d.username ?? '',
           displayName: d.displayName ?? '',
+          photoURL: d.photoURL ?? undefined,
           text: d.text ?? '',
           createdAt,
         } as PostComment;
       });
+
+      const missingPhotoUids = [...new Set(
+        raw.filter((c) => c.userId && !c.photoURL).map((c) => c.userId)
+      )];
+      const photoByUid = new Map<string, string | undefined>();
+      await Promise.all(
+        missingPhotoUids.map(async (uid) => {
+          const profile = await userService.getUserProfile(uid);
+          photoByUid.set(uid, profile?.photoURL);
+        })
+      );
+
+      return raw.map((comment) => ({
+        ...comment,
+        photoURL: comment.photoURL || photoByUid.get(comment.userId),
+      }));
     } catch (error) {
       console.error('Error fetching comments:', error);
       return [];
@@ -530,6 +548,7 @@ class PostsService {
           userId,
           username: profile.username ?? '',
           displayName: profile.displayName ?? '',
+          photoURL: profile.photoURL ?? '',
           text: text.trim(),
           createdAt: serverTimestamp(),
         });

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, ActivityIndicator, ScrollView } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import FeedCard from '../components/FeedCard';
 import GlassSurface from '../components/GlassSurface';
 import { useAuth } from '../contexts/AuthContext';
@@ -17,6 +18,7 @@ import { formatCurrency, formatPercentage } from '../utils/formatters';
 
 type HomeScreenProps = {
   refreshKey?: number;
+  onAppRefresh?: () => Promise<void>;
   onCompose?: () => void;
   onNavigateToAlerts?: () => void;
   onNavigateToPost?: (post: FeedPost) => void;
@@ -26,8 +28,23 @@ type HomeScreenProps = {
   priceAlertsUnreadCount?: number;
 };
 
+const MARKET_INDEXES = [
+  { symbol: 'SPY', name: 'S&P 500' },
+  { symbol: 'QQQ', name: 'NASDAQ' },
+  { symbol: 'DIA', name: 'Dow Jones' },
+  { symbol: 'IWM', name: 'Russell 2000' },
+  { symbol: 'BTC-USD', name: 'Bitcoin' },
+  { symbol: 'GC=F', name: 'Gold' },
+  { symbol: 'SI=F', name: 'Silver' },
+] as const;
+
+type MarketIndexRow = { symbol: string; name: string; price: number; change: number; changePercent: number };
+const MARKET_INDEXES_CACHE_KEY = '@pulse/market_indexes_v1';
+const MARKET_INDEXES_CACHE_TTL_MS = 120_000;
+
 const HomeScreen: React.FC<HomeScreenProps> = ({
   refreshKey = 0,
+  onAppRefresh,
   onCompose,
   onNavigateToAlerts,
   onNavigateToPost,
@@ -50,6 +67,71 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [lastPostId, setLastPostId] = useState<string | null>(null);
+  const hasIndexesRef = useRef(false);
+
+  const fetchMarketIndexes = useCallback(async (refresh = false) => {
+    if (refresh) {
+      MARKET_INDEXES.forEach(({ symbol }) => stockPriceService.clearCacheForSymbol(symbol));
+    }
+    if (!hasIndexesRef.current) setLoadingIndexes(true);
+    try {
+      const quotesMap = await stockPriceService.getQuotes(MARKET_INDEXES.map(({ symbol }) => symbol));
+      const indexesData = MARKET_INDEXES
+        .map(({ symbol, name }) => {
+          const quote = quotesMap.get(symbol.toUpperCase());
+          if (!quote) return null;
+          const change = quote.currentPrice - (quote.previousClose || quote.currentPrice);
+          const changePercent = quote.previousClose && quote.previousClose > 0
+            ? ((change / quote.previousClose) * 100)
+            : quote.changePercent;
+          return { symbol, name, price: quote.currentPrice, change, changePercent };
+        })
+        .filter(Boolean) as MarketIndexRow[];
+      if (indexesData.length > 0) {
+        hasIndexesRef.current = true;
+        setMarketIndexes(indexesData);
+        AsyncStorage.setItem(
+          MARKET_INDEXES_CACHE_KEY,
+          JSON.stringify({ data: indexesData, ts: Date.now() })
+        ).catch(() => {});
+      }
+    } catch (error) {
+      console.error('Error fetching market indexes:', error);
+    } finally {
+      setLoadingIndexes(false);
+    }
+  }, []);
+
+  // Hydrate cached indexes instantly, then refresh via chart API in parallel with feed
+  useEffect(() => {
+    if (!user?.uid) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(MARKET_INDEXES_CACHE_KEY);
+        if (raw && !cancelled) {
+          const parsed = JSON.parse(raw) as { data: MarketIndexRow[]; ts: number };
+          if (
+            Date.now() - parsed.ts < MARKET_INDEXES_CACHE_TTL_MS &&
+            Array.isArray(parsed.data) &&
+            parsed.data.length > 0
+          ) {
+            hasIndexesRef.current = true;
+            setMarketIndexes(parsed.data);
+            setLoadingIndexes(false);
+          }
+        }
+      } catch {
+        // ignore corrupt cache
+      }
+      if (!cancelled) fetchMarketIndexes();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, refreshKey, fetchMarketIndexes]);
 
   // Fetch user data and posts
   const fetchData = async (isRefresh: boolean = false) => {
@@ -60,8 +142,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
     try {
       if (isRefresh) {
         setRefreshing(true);
-        stockPriceService.clearCache();
-        setLoadingIndexes(true);
       } else {
         setLoading(true);
       }
@@ -84,37 +164,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
       setLoading(false);
       if (isRefresh) setRefreshing(false);
 
-      // Phase 2: market indexes + portfolio P/L (does not block feed)
-      const indexesToFetch = [
-        { symbol: 'SPY', name: 'S&P 500' },
-        { symbol: 'QQQ', name: 'NASDAQ' },
-        { symbol: 'DIA', name: 'Dow Jones' },
-        { symbol: 'IWM', name: 'Russell 2000' },
-        { symbol: 'BTC-USD', name: 'Bitcoin' },
-        { symbol: 'GC=F', name: 'Gold' },
-        { symbol: 'SI=F', name: 'Silver' },
-      ];
-
-      // Market indexes + portfolio data load in parallel after feed is shown
-      const [quotesMap, positions, trades] = await Promise.all([
-        stockPriceService.getQuotes(indexesToFetch.map(({ symbol }) => symbol)).catch(() => new Map()),
+      // Portfolio day P/L (indexes load separately)
+      const [positions, trades] = await Promise.all([
         userService.getUserPortfolio(user.uid, true).catch(() => []),
         userService.getUserTradingHistory(user.uid, 50).catch(() => []),
       ]);
-
-      const indexesData = indexesToFetch
-        .map(({ symbol, name }) => {
-          const quote = quotesMap.get(symbol.toUpperCase());
-          if (!quote) return null;
-          const change = quote.currentPrice - (quote.previousClose || quote.currentPrice);
-          const changePercent = quote.previousClose && quote.previousClose > 0
-            ? ((change / quote.previousClose) * 100)
-            : 0;
-          return { symbol, name, price: quote.currentPrice, change, changePercent };
-        })
-        .filter(Boolean) as Array<{ symbol: string; name: string; price: number; change: number; changePercent: number }>;
-      setMarketIndexes(indexesData);
-      setLoadingIndexes(false);
 
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
@@ -174,7 +228,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
     setLastPostId(null);
     setHasMore(true);
     fetchData(false);
-  }, [user, refreshKey]);
+  }, [user?.uid, user?.displayName, user?.username, refreshKey]);
 
   // Set up real-time listener for posts
   useEffect(() => {
@@ -214,8 +268,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   const onRefresh = async () => {
+    await onAppRefresh?.();
     setLastPostId(null);
     setHasMore(true);
+    fetchMarketIndexes(true);
     await fetchData(true);
     if (feedTab === 'following') loadFollowingPosts();
   };
@@ -224,6 +280,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
   const headerDisplayName =
     userProfile?.displayName?.trim() ||
     user?.displayName?.trim() ||
+    user?.username?.trim() ||
     userProfile?.username?.trim() ||
     '';
 
@@ -302,43 +359,50 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
 
         {(loadingIndexes || marketIndexes.length > 0) && (
           <View style={styles.trendingSection}>
-            <View style={styles.trendingHeader}>
-              <Ionicons name="trending-up" size={18} color={Colors.primary} />
-              <Text style={styles.trendingTitle}>Market Indexes</Text>
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.trendingScroll}
-              scrollEnabled={!loadingIndexes}
+            <GlassSurface
+              style={styles.indexesCard}
+              borderRadius={BorderRadius.xl}
+              variant="subtle"
+              glow="purple"
             >
-              {loadingIndexes ? (
-                [1, 2, 3, 4].map((i) => (
-                  <View key={i} style={[styles.trendingCard, styles.skeletonCard]}>
-                    <View style={[styles.skeletonLine, { width: 44, marginBottom: 6 }]} />
-                    <View style={[styles.skeletonLine, { width: 60, height: 9, marginBottom: 8 }]} />
-                    <View style={[styles.skeletonLine, { width: 52, marginBottom: 4 }]} />
-                    <View style={[styles.skeletonLine, { width: 36, height: 9 }]} />
-                  </View>
-                ))
-              ) : (
-                marketIndexes.map((index) => (
-                  <TouchableOpacity
-                    key={index.symbol}
-                    style={styles.trendingCard}
-                    onPress={() => onNavigateToStock?.(index.symbol)}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={styles.trendingSymbol}>{index.symbol}</Text>
-                    <Text style={styles.trendingName} numberOfLines={1}>{index.name}</Text>
-                    <Text style={styles.trendingPrice}>{formatCurrency(index.price)}</Text>
-                    <Text style={[styles.trendingChange, { color: index.changePercent >= 0 ? Colors.success : Colors.error }]}>
-                      {index.changePercent >= 0 ? '+' : ''}{formatPercentage(index.changePercent, false)}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
+              <View style={styles.trendingHeader}>
+                <Ionicons name="trending-up" size={18} color={Colors.primary} />
+                <Text style={styles.trendingTitle}>Market Indexes</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.trendingScroll}
+                scrollEnabled={!loadingIndexes}
+              >
+                {loadingIndexes ? (
+                  [1, 2, 3, 4].map((i) => (
+                    <View key={i} style={[styles.trendingCard, styles.skeletonCard]}>
+                      <View style={[styles.skeletonLine, { width: 44, marginBottom: 6 }]} />
+                      <View style={[styles.skeletonLine, { width: 60, height: 9, marginBottom: 8 }]} />
+                      <View style={[styles.skeletonLine, { width: 52, marginBottom: 4 }]} />
+                      <View style={[styles.skeletonLine, { width: 36, height: 9 }]} />
+                    </View>
+                  ))
+                ) : (
+                  marketIndexes.map((index) => (
+                    <TouchableOpacity
+                      key={index.symbol}
+                      style={styles.trendingCard}
+                      onPress={() => onNavigateToStock?.(index.symbol)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={styles.trendingSymbol}>{index.symbol}</Text>
+                      <Text style={styles.trendingName} numberOfLines={1}>{index.name}</Text>
+                      <Text style={styles.trendingPrice}>{formatCurrency(index.price)}</Text>
+                      <Text style={[styles.trendingChange, { color: index.changePercent >= 0 ? Colors.success : Colors.error }]}>
+                        {index.changePercent >= 0 ? '+' : ''}{formatPercentage(index.changePercent, false)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </ScrollView>
+            </GlassSurface>
           </View>
         )}
 
@@ -448,17 +512,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* Floating Compose Button */}
       {onCompose && (
         <TouchableOpacity onPress={onCompose} activeOpacity={0.85} style={styles.composeFABWrap}>
-          <GlassSurface
-            style={styles.composeFAB}
-            borderRadius={32}
-            glow="purple"
-            tintColor="rgba(139, 92, 246, 0.45)"
-            intensity={Glass.blurIntensityHeavy}
-          >
-            <View style={styles.composeFABInner}>
-              <Ionicons name="add" size={28} color={Colors.white} />
-            </View>
-          </GlassSurface>
+          <View style={styles.composeFAB}>
+            <Ionicons name="add" size={30} color={Colors.white} />
+          </View>
         </TouchableOpacity>
       )}
       
@@ -487,18 +543,15 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xxl,
   },
   header: {
-    marginBottom: Spacing.xl,
-    paddingHorizontal: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 0,
   },
   welcomeSection: {
     flex: 1,
-    paddingLeft: Spacing.xs,
     paddingRight: Spacing.sm,
     justifyContent: 'center',
     minWidth: 0,
@@ -542,9 +595,13 @@ const styles = StyleSheet.create({
   referButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(139, 92, 246, 0.12)',
+    borderWidth: 1,
+    borderColor: Glass.postBorder,
   },
   referButtonText: {
     color: Colors.primary,
@@ -555,6 +612,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    flexShrink: 1,
+    minWidth: 0,
   },
   userName: {
     color: Colors.textPrimary,
@@ -562,7 +621,6 @@ const styles = StyleSheet.create({
     fontWeight: Typography.fontWeight.extrabold,
     letterSpacing: -0.5,
     flexShrink: 1,
-    minHeight: Typography.fontSize.xxl * 1.25,
   },
   statsRow: {
     flexDirection: 'row',
@@ -657,22 +715,30 @@ const styles = StyleSheet.create({
   composeFAB: {
     width: 64,
     height: 64,
-  },
-  composeFABInner: {
-    width: 64,
-    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#A78BFA',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#A78BFA',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    elevation: 10,
   },
   trendingSection: {
+    marginTop: Spacing.xs,
     marginBottom: Spacing.xl,
+  },
+  indexesCard: {
+    padding: Spacing.md,
+    gap: Spacing.sm,
   },
   trendingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
-    marginBottom: Spacing.sm,
-    paddingHorizontal: Spacing.xs,
   },
   trendingTitle: {
     color: Colors.textPrimary,
@@ -681,19 +747,17 @@ const styles = StyleSheet.create({
   },
   trendingScroll: {
     gap: Spacing.sm,
-    paddingRight: Spacing.md,
     paddingVertical: 2,
   },
   trendingCard: {
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Glass.postBorder,
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    minWidth: 116,
-    minHeight: 96,
-    marginRight: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    minWidth: 112,
+    minHeight: 92,
     justifyContent: 'center',
   },
   trendingSymbol: {
@@ -760,7 +824,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.sm,
     marginBottom: Spacing.md,
-    paddingHorizontal: Spacing.xs,
   },
   feedTabBtn: {
     flex: 1,

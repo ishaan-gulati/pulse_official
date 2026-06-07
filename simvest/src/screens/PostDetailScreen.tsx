@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform, Alert, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform, Alert, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
@@ -537,13 +537,6 @@ const PostDetailScreen: React.FC<PostDetailScreenProps> = ({ post, onClose, onNa
                         <ActivityIndicator size="small" color={Colors.primary} />
                       ) : data.price !== null && data.changePct !== null ? (
                         <>
-                          {data.logo ? (
-                            <Image source={{ uri: data.logo }} style={styles.stockPillLogo} />
-                          ) : (
-                            <View style={styles.stockPillLogoPlaceholder}>
-                              <Text style={styles.stockPillLogoText}>{symbol[0]}</Text>
-                            </View>
-                          )}
                           <Text style={styles.stockPillSymbol}>{symbol}</Text>
                           <Text style={[styles.stockPillChange, { color: data.changePct >= 0 ? Colors.success : Colors.error }]}>
                             {data.changePct >= 0 ? '+' : ''}{formatPercentage(data.changePct, false)}
@@ -629,16 +622,18 @@ const PostDetailScreen: React.FC<PostDetailScreenProps> = ({ post, onClose, onNa
           ) : (
             comments.map((c, idx) => {
               const commentMinutes = Math.max(0, Math.floor((Date.now() - c.createdAt) / 60000));
-              const initial = c.displayName?.charAt(0)?.toUpperCase() || '?';
               const canTap = !!(c.userId && onViewUser);
               const canDeleteComment =
                 !!user?.uid &&
                 !!c.userId &&
                 String(user.uid) === String(c.userId);
               const avatarEl = (
-                <View style={styles.commentAvatar}>
-                  <Text style={styles.commentAvatarText}>{initial}</Text>
-                </View>
+                <UserAvatar
+                  photoURL={c.photoURL}
+                  displayName={c.displayName}
+                  username={c.username}
+                  size={32}
+                />
               );
               const headerEl = (
                 <View style={styles.commentMeta}>
@@ -990,26 +985,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     gap: Spacing.sm,
-  },
-  stockPillLogo: {
-    width: 20,
-    height: 20,
-    borderRadius: BorderRadius.sm,
-  },
-  stockPillLogoPlaceholder: {
-    width: 20,
-    height: 20,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: Colors.primary + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.primary + '40',
-  },
-  stockPillLogoText: {
-    color: Colors.primary,
-    fontSize: Typography.fontSize.xs,
-    fontWeight: Typography.fontWeight.extrabold,
   },
   stockPillSymbol: {
     color: Colors.textPrimary,

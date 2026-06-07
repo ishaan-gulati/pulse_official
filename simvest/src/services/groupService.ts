@@ -81,14 +81,14 @@ export const groupService = {
     return results;
   },
 
-  async getGroupLeaderboard(groupId: string): Promise<LeaderboardEntry[]> {
-    const snap = await getDoc(doc(db, GROUPS_COLLECTION, groupId));
-    if (!snap.exists()) return [];
-    const group = snap.data() as Group;
-    const allEntries = await userService.getLeaderboard(200);
-    const memberSet = new Set(group.members);
-    const filtered = allEntries.filter((e) => memberSet.has(e.uid));
-    return filtered.map((e, i) => ({ ...e, rank: i + 1 }));
+  async getGroupLeaderboard(groupId: string, memberUids?: string[]): Promise<LeaderboardEntry[]> {
+    let uids = memberUids;
+    if (!uids) {
+      const snap = await getDoc(doc(db, GROUPS_COLLECTION, groupId));
+      if (!snap.exists()) return [];
+      uids = (snap.data() as Group).members;
+    }
+    return userService.getLeaderboardForUsers(uids);
   },
 
   async inviteFriend(groupId: string, friendUid: string): Promise<void> {
@@ -97,11 +97,19 @@ export const groupService = {
     });
   },
 
-  async sendMessage(groupId: string, uid: string, text: string, displayName?: string, username?: string): Promise<void> {
+  async sendMessage(
+    groupId: string,
+    uid: string,
+    text: string,
+    displayName?: string,
+    username?: string,
+    photoURL?: string
+  ): Promise<void> {
     await addDoc(collection(db, GROUPS_COLLECTION, groupId, 'messages'), {
       userId: uid,
       displayName: displayName ?? '',
       username: username ?? '',
+      photoURL: photoURL ?? '',
       text,
       createdAt: serverTimestamp(),
     });
@@ -112,13 +120,22 @@ export const groupService = {
       collection(db, GROUPS_COLLECTION, groupId, 'messages'),
       orderBy('createdAt', 'asc')
     );
-    return onSnapshot(q, (snap) => {
-      const msgs: GroupMessage[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<GroupMessage, 'id'>),
-      }));
-      callback(msgs);
-    });
+    return onSnapshot(
+      q,
+      (snap) => {
+        const msgs: GroupMessage[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<GroupMessage, 'id'>),
+        }));
+        callback(msgs);
+      },
+      (error) => {
+        const code = (error as { code?: string })?.code;
+        // Expected when the user leaves or the group is deleted while this screen is open.
+        if (code === 'permission-denied') return;
+        console.error('Error in group messages subscription:', error);
+      }
+    );
   },
 
   async getGroup(groupId: string): Promise<Group | null> {

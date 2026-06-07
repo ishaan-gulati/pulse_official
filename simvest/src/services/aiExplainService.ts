@@ -80,21 +80,30 @@ function stockCacheDocId(symbol: string): string {
   return `${symbol.toUpperCase()}_${STOCK_CACHE_KEY_VERSION}`;
 }
 
-/** Get cached stock summary from Firestore (valid for 24h). */
+/** Get cached stock summary from Firestore (valid for 24h). Best-effort — cache miss on permission/errors. */
 async function getCachedStock(symbol: string): Promise<string | null> {
-  const ref = doc(db, 'aiCache', stockCacheDocId(symbol));
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  const d = snap.data();
-  const cachedAt = d?.cachedAt?.toMillis?.() ?? 0;
-  if (Date.now() - cachedAt > CACHE_TTL_MS) return null;
-  return typeof d?.explanation === 'string' ? d.explanation : null;
+  try {
+    const ref = doc(db, 'aiCache', stockCacheDocId(symbol));
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    const cachedAt = d?.cachedAt?.toMillis?.() ?? 0;
+    if (Date.now() - cachedAt > CACHE_TTL_MS) return null;
+    return typeof d?.explanation === 'string' ? d.explanation : null;
+  } catch (e) {
+    console.warn('AI stock cache read failed:', e);
+    return null;
+  }
 }
 
-/** Store stock summary in Firestore. */
+/** Store stock summary in Firestore. Best-effort — explain still succeeds if write fails. */
 async function setCachedStock(symbol: string, explanation: string): Promise<void> {
-  const ref = doc(db, 'aiCache', stockCacheDocId(symbol));
-  await setDoc(ref, { explanation, cachedAt: new Date() });
+  try {
+    const ref = doc(db, 'aiCache', stockCacheDocId(symbol));
+    await setDoc(ref, { explanation, cachedAt: new Date() });
+  } catch (e) {
+    console.warn('AI stock cache write failed:', e);
+  }
 }
 
 /** Get current portfolio explain usage for user (count + date). */

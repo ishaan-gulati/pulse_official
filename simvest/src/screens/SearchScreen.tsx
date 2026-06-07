@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Image, ScrollView, RefreshControl, Linking, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ScrollView, RefreshControl, Linking, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StockSuggestion, StockDetails } from '../types';
 import { Colors, Spacing, BorderRadius, Typography, Shadows, Glass } from '../constants/theme';
@@ -17,15 +17,20 @@ import { aiExplainService, AI_EXPLAIN_ERRORS } from '../services/aiExplainServic
 import { useAuth } from '../contexts/AuthContext';
 import { userService, PortfolioPosition } from '../services/userService';
 import { formatCurrency, formatPercentage, formatNumber } from '../utils/formatters';
+import FlexTextInput from '../components/FlexTextInput';
+
+/** Inner inset matches chart header padding so symbol/title line up with "Price Chart". */
+const DETAIL_INSET = Spacing.md;
 
 // Popular stocks shown in "Start here" when no search
 const START_HERE_SYMBOLS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'GOOGL', 'AMZN'];
 
 type SearchScreenProps = {
   initialSymbol?: string;
+  onAppRefresh?: () => Promise<void>;
 };
 
-const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
+const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol, onAppRefresh }) => {
   const { user } = useAuth();
   const [query, setQuery] = useState(initialSymbol || '');
   const [selected, setSelected] = useState<string | null>(initialSymbol || null);
@@ -55,6 +60,7 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [aiExplainVisible, setAiExplainVisible] = useState(false);
   const [aiExplainStatus, setAiExplainStatus] = useState<AIExplainStatus>('idle');
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [aiErrorCode, setAiErrorCode] = useState<string | null>(null);
 
@@ -163,10 +169,34 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    await onAppRefresh?.();
     await loadMarketData();
     if (selected) {
+      setDetailRefreshKey((k) => k + 1);
+      setPriceFetched(false);
+      setPositionFetched(false);
       const price = await tradingService.getCurrentPrice(selected);
       setCurrentPrice(price);
+      setPriceFetched(true);
+      if (user?.uid) {
+        const [pos, history] = await Promise.all([
+          tradingService.getPosition(user.uid, selected),
+          userService.getUserTradingHistory(user.uid, 50),
+        ]);
+        setPosition(pos);
+        setPositionFetched(true);
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const startMs = startOfToday.getTime();
+        setBoughtThisSymbolToday(
+          (history || []).some(
+            (t) =>
+              t.action === 'buy' &&
+              t.symbol.toUpperCase() === selected.toUpperCase() &&
+              (t.timestamp?.toMillis ? t.timestamp.toMillis() : typeof t.timestamp === 'number' ? t.timestamp : 0) >= startMs
+          )
+        );
+      }
     }
     setRefreshing(false);
   };
@@ -227,7 +257,7 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
       const interval = setInterval(fetchDetails, 30000); // 30 seconds
       return () => clearInterval(interval);
     }
-  }, [selected]);
+  }, [selected, detailRefreshKey]);
 
   // Fetch chart data when symbol or timeframe changes
   useEffect(() => {
@@ -268,7 +298,7 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
     } else {
       setChartData([]);
     }
-  }, [selected, chartTimeframe]);
+  }, [selected, chartTimeframe, detailRefreshKey]);
 
   // Fetch prices for search suggestions
   useEffect(() => {
@@ -369,22 +399,25 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
 
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color={Colors.textTertiary} style={styles.searchIcon} />
-      <TextInput
-        value={query}
-        onChangeText={(t) => { setQuery(t); setSelected(null); }}
-        onFocus={() => {
-          if (selected) {
-            setQuery('');
-            setSelected(null);
-          }
-          listScrollRef.current?.scrollTo({ y: 0, animated: true });
-        }}
-        style={styles.input}
-          placeholder="Search stocks (AAPL, TSLA, NVDA...)"
+        <FlexTextInput
+          value={query}
+          onChangeText={(t) => { setQuery(t); setSelected(null); }}
+          onFocus={() => {
+            if (selected) {
+              setQuery('');
+              setSelected(null);
+            }
+            listScrollRef.current?.scrollTo({ y: 0, animated: true });
+          }}
+          style={styles.input}
+          placeholder="Search stocks…"
           placeholderTextColor={Colors.textTertiary}
         />
         {query.length > 0 && (
-          <TouchableOpacity onPress={() => { setQuery(''); setSelected(null); }}>
+          <TouchableOpacity
+            style={styles.searchClearBtn}
+            onPress={() => { setQuery(''); setSelected(null); }}
+          >
             <Ionicons name="close-circle" size={20} color={Colors.textTertiary} />
           </TouchableOpacity>
         )}
@@ -554,36 +587,38 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
           showsVerticalScrollIndicator={false}
         >
           {/* Stock Header */}
-          <View style={styles.stockHeader}>
-            <View style={styles.stockHeaderLeft}>
-          <Text style={styles.symbolTitle}>{selected}</Text>
-              <Text style={styles.stockName}>
-                {STOCK_SUGGESTIONS.find(s => s.symbol === selected)?.name || 'Stock'}
-              </Text>
-            </View>
-            <View style={styles.stockHeaderRight}>
-              <Text style={styles.currentPrice}>
-                ${currentPrice ? currentPrice.toFixed(2) : '...'}
-              </Text>
-              {stockDetails.length > 0 && (() => {
-                const changeDetail = stockDetails.find(d => d.label === 'Day Change');
-                if (changeDetail) {
-                  const isPositive = changeDetail.value.includes('+');
-                  return (
-                    <View style={[styles.priceChange, { backgroundColor: isPositive ? Colors.success + '20' : Colors.error + '20' }]}>
-                      <Ionicons 
-                        name={isPositive ? 'arrow-up' : 'arrow-down'} 
-                        size={14} 
-                        color={isPositive ? Colors.success : Colors.error} 
-                      />
-                      <Text style={[styles.priceChangeText, { color: isPositive ? Colors.success : Colors.error }]}>
-                        {changeDetail.value.replace(/[▲▼]/g, '').trim()}
-                      </Text>
-                    </View>
-                  );
-                }
-                return null;
-              })()}
+          <View style={styles.stockHeaderCard}>
+            <View style={styles.stockHeader}>
+              <View style={styles.stockHeaderLeft}>
+                <Text style={styles.symbolTitle}>{selected}</Text>
+                <Text style={styles.stockName}>
+                  {STOCK_SUGGESTIONS.find(s => s.symbol === selected)?.name || 'Stock'}
+                </Text>
+              </View>
+              <View style={styles.stockHeaderRight}>
+                <Text style={styles.currentPrice}>
+                  ${currentPrice ? currentPrice.toFixed(2) : '...'}
+                </Text>
+                {stockDetails.length > 0 && (() => {
+                  const changeDetail = stockDetails.find(d => d.label === 'Day Change');
+                  if (changeDetail) {
+                    const isPositive = changeDetail.value.includes('+');
+                    return (
+                      <View style={[styles.priceChange, { backgroundColor: isPositive ? Colors.success + '20' : Colors.error + '20' }]}>
+                        <Ionicons
+                          name={isPositive ? 'arrow-up' : 'arrow-down'}
+                          size={14}
+                          color={isPositive ? Colors.success : Colors.error}
+                        />
+                        <Text style={[styles.priceChangeText, { color: isPositive ? Colors.success : Colors.error }]}>
+                          {changeDetail.value.replace(/[▲▼]/g, '').trim()}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return null;
+                })()}
+              </View>
             </View>
           </View>
 
@@ -593,8 +628,8 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
               <Text style={styles.chartTitle}>Price Chart</Text>
               <View style={styles.chartTimeframes}>
                 {(['1D', '1W', '1M', '1Y'] as const).map((tf) => (
-                  <TouchableOpacity 
-                    key={tf} 
+                  <TouchableOpacity
+                    key={tf}
                     style={[
                       styles.timeframeButton,
                       chartTimeframe === tf && styles.timeframeButtonActive
@@ -626,19 +661,21 @@ const SearchScreen: React.FC<SearchScreenProps> = ({ initialSymbol }) => {
           </View>
 
           {/* Stats Grid - explicit rows so High/Low align perfectly */}
-          <View style={styles.statsGrid}>
-            {[0, 2, 4].map((startIdx) => (
-              <View key={startIdx} style={styles.statsGridRow}>
-                <View style={styles.statCard}>
-                  <Text style={styles.statLabel}>{stockDetails[startIdx]?.label}</Text>
-                  <Text style={styles.statValue}>{stockDetails[startIdx]?.value ?? '-'}</Text>
+          <View style={styles.statsGlassCard}>
+            <View style={styles.statsGrid}>
+              {[0, 2, 4].map((startIdx) => (
+                <View key={startIdx} style={styles.statsGridRow}>
+                  <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>{stockDetails[startIdx]?.label}</Text>
+                    <Text style={styles.statValue}>{stockDetails[startIdx]?.value ?? '-'}</Text>
+                  </View>
+                  <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>{stockDetails[startIdx + 1]?.label}</Text>
+                    <Text style={styles.statValue}>{stockDetails[startIdx + 1]?.value ?? '-'}</Text>
+                  </View>
                 </View>
-                <View style={styles.statCard}>
-                  <Text style={styles.statLabel}>{stockDetails[startIdx + 1]?.label}</Text>
-                  <Text style={styles.statValue}>{stockDetails[startIdx + 1]?.value ?? '-'}</Text>
-                </View>
-              </View>
-            ))}
+              ))}
+            </View>
           </View>
 
           {/* Your position - placeholder while loading, then full box if user has a position */}
@@ -830,6 +867,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: Typography.fontSize.xxxl,
     fontWeight: Typography.fontWeight.bold,
+    marginLeft: DETAIL_INSET,
   },
   backButton: {
     padding: Spacing.xs,
@@ -839,19 +877,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Colors.backgroundSecondary,
     borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Glass.postBorder,
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.md,
     paddingHorizontal: Spacing.md,
     height: 48,
     gap: Spacing.sm,
+    overflow: 'hidden',
+    minWidth: 0,
   },
   searchIcon: {
-    marginRight: Spacing.xs,
+    flexShrink: 0,
+  },
+  searchClearBtn: {
+    flexShrink: 0,
   },
   input: {
-    flex: 1,
     color: Colors.textPrimary,
     fontSize: Typography.fontSize.md,
   },
@@ -1016,12 +1058,15 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.md,
     textAlign: 'center',
   },
+  stockHeaderCard: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: DETAIL_INSET,
+  },
   stockHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginTop: Spacing.md,
-    marginBottom: Spacing.lg,
   },
   stockHeaderLeft: {
     flex: 1,
@@ -1050,7 +1095,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
+    borderRadius: BorderRadius.full,
     gap: 4,
   },
   priceChangeText: {
@@ -1058,20 +1103,20 @@ const styles = StyleSheet.create({
     fontWeight: Typography.fontWeight.bold,
   },
   chartContainer: {
-    borderRadius: BorderRadius.md,
-    overflow: 'hidden',
     marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    borderRadius: BorderRadius.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Glass.postBorder,
     backgroundColor: Colors.backgroundSecondary,
+    overflow: 'hidden',
   },
   chartHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Glass.postBorder,
   },
   chartTitle: {
     color: Colors.textPrimary,
@@ -1085,7 +1130,7 @@ const styles = StyleSheet.create({
   timeframeButton: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
+    borderRadius: BorderRadius.full,
     backgroundColor: Colors.backgroundTertiary,
   },
   timeframeText: {
@@ -1129,8 +1174,11 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     fontSize: Typography.fontSize.md,
   },
-  statsGrid: {
+  statsGlassCard: {
     marginBottom: Spacing.lg,
+  },
+  statsGrid: {
+    marginBottom: 0,
   },
   statsGridRow: {
     flexDirection: 'row',
@@ -1140,12 +1188,9 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minHeight: 64,
-    backgroundColor: Glass.fillSubtle,
+    backgroundColor: Colors.backgroundSecondary,
     borderRadius: BorderRadius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Glass.postBorder,
     padding: Spacing.md,
-    ...Shadows.small,
   },
   statLabel: {
     color: Colors.textTertiary,
@@ -1160,11 +1205,8 @@ const styles = StyleSheet.create({
   positionSummaryBox: {
     backgroundColor: Colors.backgroundSecondary,
     borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
     padding: Spacing.md,
     marginBottom: Spacing.lg,
-    ...Shadows.small,
   },
   positionLoadingPlaceholder: {
     flexDirection: 'row',
@@ -1184,7 +1226,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   positionSummaryDivider: {
-    height: 1,
+    height: StyleSheet.hairlineWidth,
     backgroundColor: Colors.border,
     marginVertical: Spacing.sm,
   },
@@ -1213,10 +1255,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
     gap: Spacing.sm,
-    ...Shadows.medium,
+    ...Shadows.small,
   },
   buyButton: {
     backgroundColor: Colors.success,
@@ -1234,7 +1276,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    marginTop: Spacing.xl,
+    marginTop: Spacing.lg,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     borderRadius: BorderRadius.md,

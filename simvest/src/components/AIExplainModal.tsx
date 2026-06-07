@@ -41,7 +41,9 @@ const AIExplainModal: React.FC<AIExplainModalProps> = ({
           ? 'Too many requests right now. Wait a minute and try again.'
           : errorCode === AI_EXPLAIN_ERRORS.NETWORK_ERROR || errorCode === AI_EXPLAIN_ERRORS.UNKNOWN
             ? 'Something went wrong. Please try again later.'
-            : null;
+            : status === 'error'
+              ? 'Something went wrong. Please try again later.'
+              : null;
 
   return (
     <Modal

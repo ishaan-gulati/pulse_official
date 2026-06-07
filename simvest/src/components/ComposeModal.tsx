@@ -1,9 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { Modal, View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, ScrollView, SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Modal,
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../constants/theme';
+import { Colors, Spacing, BorderRadius, Typography, Glass, Shadows } from '../constants/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { postsService } from '../services/postsService';
+import { userService, UserProfile } from '../services/userService';
+import { extractStockSymbols } from '../utils/stockParser';
+import UserAvatar from './UserAvatar';
+
+const POST_MAX = 500;
+
+const TOPIC_PRESETS = ['Trading', 'Analysis', 'Earnings', 'Watchlist', 'Question', 'Hot Take'] as const;
+
+const QUICK_TICKERS = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'META'] as const;
 
 type ComposeModalProps = {
   visible: boolean;
@@ -13,21 +35,39 @@ type ComposeModalProps = {
 
 const ComposeModal: React.FC<ComposeModalProps> = ({ visible, onClose, onPostCreated }) => {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [content, setContent] = useState('');
   const [topic, setTopic] = useState('');
-  const [showTopicInput, setShowTopicInput] = useState(false);
-  const [topicInput, setTopicInput] = useState('');
+  const [customTopic, setCustomTopic] = useState('');
+  const [showCustomTopic, setShowCustomTopic] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Reset form when modal closes
   useEffect(() => {
     if (!visible) {
       setContent('');
       setTopic('');
-      setShowTopicInput(false);
-      setTopicInput('');
+      setCustomTopic('');
+      setShowCustomTopic(false);
+      return;
     }
-  }, [visible]);
+    if (!user?.uid) return;
+    userService.getUserProfile(user.uid).then(setProfile).catch(() => {});
+  }, [visible, user?.uid]);
+
+  const detectedSymbols = useMemo(() => extractStockSymbols(content), [content]);
+  const selectedTopicLabel = showCustomTopic ? customTopic.trim() : topic.trim();
+
+  const canPost = content.trim().length > 0 && !submitting;
+
+  const insertTicker = (symbol: string) => {
+    const tag = `$${symbol}`;
+    setContent((prev) => {
+      if (new RegExp(`\\$${symbol}\\b`, 'i').test(prev)) return prev;
+      const spacer = prev.length > 0 && !prev.endsWith(' ') ? ' ' : '';
+      return `${prev}${spacer}${tag} `;
+    });
+  };
 
   const submit = async () => {
     if (!user?.uid) {
@@ -35,46 +75,34 @@ const ComposeModal: React.FC<ComposeModalProps> = ({ visible, onClose, onPostCre
       return;
     }
 
-    if (!content.trim()) {
-      Alert.alert('Error', 'Please enter some content');
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      Alert.alert('Write something', 'Add a message before posting.');
       return;
     }
 
-    if (content.trim().length > 280) {
-      Alert.alert('Error', 'Post must be 280 characters or less');
+    if (trimmed.length > POST_MAX) {
+      Alert.alert('Too long', `Keep your post under ${POST_MAX} characters.`);
       return;
     }
+
+    const finalTopic = selectedTopicLabel || undefined;
 
     setSubmitting(true);
     try {
-      const postId = await postsService.createPost(
-        user.uid,
-        content.trim(),
-        undefined, // No body
-        topic.trim() || undefined
-      );
-      
-      // Success - clear form and close
-      setContent('');
-      setTopic('');
-      
-      // Trigger refresh callback
+      await postsService.createPost(user.uid, trimmed, undefined, finalTopic);
       onPostCreated?.();
-      
-      // Close modal after a brief delay to show success
-      setTimeout(() => {
-    onClose();
-      }, 300);
-    } catch (error: any) {
+      setTimeout(onClose, 200);
+    } catch (error: unknown) {
       console.error('Error creating post:', error);
+      const err = error as { code?: string; message?: string };
       let errorMessage = 'Failed to create post';
-      
-      if (error?.code === 'permission-denied') {
-        errorMessage = 'You do not have permission to create posts. Please check your account.';
-      } else if (error?.message) {
-        errorMessage = error.message;
+      if (err?.code === 'permission-denied') {
+        errorMessage = 'You do not have permission to create posts.';
+      } else if (err?.message) {
+        errorMessage = err.message;
       }
-      
       Alert.alert('Error', errorMessage);
     } finally {
       setSubmitting(false);
@@ -82,140 +110,168 @@ const ComposeModal: React.FC<ComposeModalProps> = ({ visible, onClose, onPostCre
   };
 
   return (
-    <Modal animationType="slide" visible={visible} onRequestClose={onClose}>
-      <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView 
-          style={styles.keyboardView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    <Modal animationType="slide" visible={visible} onRequestClose={onClose} presentationStyle="pageSheet">
+      <View style={[styles.root, { paddingTop: Math.max(insets.top * 0.25, 4) }]}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 6 : 0}
         >
-        <View style={styles.header}> 
-            <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
-              <Text style={styles.cancelText}>Cancel</Text>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.iconBtn}
+              disabled={submitting}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="close" size={22} color={Colors.textPrimary} />
             </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>Create Post</Text>
-            </View>
-            <TouchableOpacity 
-              style={[
-                styles.postBtn, 
-                submitting && styles.postBtnDisabled, 
-                !content.trim() && styles.postBtnDisabled,
-                content.trim() && !submitting && styles.postBtnActive
-              ]} 
+            <Text style={styles.headerTitle}>Create post</Text>
+            <TouchableOpacity
+              style={[styles.postBtn, canPost && styles.postBtnActive]}
               onPress={submit}
-              disabled={submitting || !content.trim()}
+              disabled={!canPost}
+              activeOpacity={0.85}
             >
               {submitting ? (
-                <ActivityIndicator size="small" color={content.trim() ? Colors.white : Colors.textSecondary} />
+                <ActivityIndicator size="small" color={Colors.white} />
               ) : (
-                <Text style={[styles.postText, content.trim() && styles.postTextActive]}>Post</Text>
+                <Text style={[styles.postBtnText, canPost && styles.postBtnTextActive]}>Post</Text>
               )}
             </TouchableOpacity>
-        </View>
+          </View>
 
-          <View style={styles.contentWrapper}>
-            <ScrollView 
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-            >
-            {topic.length > 0 && (
-              <View style={styles.topicContainer}>
-                <View style={styles.topicPill}>
-                  <Text style={styles.topicText}>{topic}</Text>
-                  <TouchableOpacity onPress={() => setTopic('')} style={styles.topicRemove}>
-                    <Ionicons name="close" size={14} color={Colors.primary} />
-                  </TouchableOpacity>
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Main write area */}
+            <View style={styles.composeBlock}>
+              <View style={styles.composeRow}>
+                <UserAvatar
+                  photoURL={profile?.photoURL}
+                  displayName={profile?.displayName}
+                  username={profile?.username}
+                  size={44}
+                />
+                <View style={styles.composeMain}>
+                  <Text style={styles.authorName} numberOfLines={1}>
+                    {profile?.displayName || profile?.username || 'You'}
+                  </Text>
+                  <TextInput
+                    value={content}
+                    onChangeText={setContent}
+                    style={styles.contentInput}
+                    placeholder="Share your take… use $ before a ticker to tag it"
+                    placeholderTextColor={Colors.textTertiary}
+                    maxLength={POST_MAX}
+                    editable={!submitting}
+                    multiline
+                    textAlignVertical="top"
+                    autoFocus
+                  />
                 </View>
-        </View>
-            )}
+              </View>
 
-            <View style={styles.contentContainer}>
-        <TextInput
-                value={content}
-                onChangeText={setContent}
-                style={styles.contentInput}
-                placeholder="What's on your mind?"
-                placeholderTextColor={Colors.textDisabled}
-                maxLength={280}
-                editable={!submitting}
-                multiline
-                autoFocus
-              />
-              <View style={styles.charCountRow}>
-                <Text style={[styles.charCount, content.length > 250 && styles.charCountWarning]}>
-                  {content.length}/280
+              <View style={styles.composeMeta}>
+                <Text style={[styles.charCount, content.length > POST_MAX - 40 && styles.charCountWarn]}>
+                  {content.length}/{POST_MAX}
                 </Text>
+                {detectedSymbols.length > 0 ? (
+                  <View style={styles.linkedRow}>
+                    {detectedSymbols.map((sym) => (
+                      <View key={sym} style={styles.linkedPill}>
+                        <Text style={styles.linkedPillText}>${sym}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             </View>
 
-            {!topic && !showTopicInput && (
-              <TouchableOpacity 
-                style={styles.addTopicBtn}
-                onPress={() => setShowTopicInput(true)}
-              >
-                <Text style={styles.addTopicText}>+ Add topic</Text>
-              </TouchableOpacity>
-            )}
-
-            {showTopicInput && (
-              <View style={styles.topicInputContainer}>
-        <TextInput
-                  value={topicInput}
-                  onChangeText={setTopicInput}
-                  style={styles.topicInputField}
-                  placeholder="Enter topic"
-                  placeholderTextColor={Colors.textTertiary}
-                  autoFocus
-                  maxLength={30}
-                  onSubmitEditing={() => {
-                    if (topicInput.trim()) {
-                      setTopic(topicInput.trim());
-                      setTopicInput('');
-                      setShowTopicInput(false);
+            {/* Topics */}
+            <View style={styles.block}>
+              <Text style={styles.blockLabel}>Topic</Text>
+              <View style={styles.topicWrap}>
+                {TOPIC_PRESETS.map((t) => {
+                  const selected = !showCustomTopic && topic === t;
+                  return (
+                    <TouchableOpacity
+                      key={t}
+                      style={[styles.topicChip, selected && styles.topicChipActive]}
+                      onPress={() => {
+                        setShowCustomTopic(false);
+                        setCustomTopic('');
+                        setTopic((prev) => (prev === t ? '' : t));
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.topicChipText, selected && styles.topicChipTextActive]}>{t}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  style={[styles.topicChip, showCustomTopic && styles.topicChipActive]}
+                  onPress={() => {
+                    if (showCustomTopic) {
+                      setShowCustomTopic(false);
+                      setCustomTopic('');
+                    } else {
+                      setShowCustomTopic(true);
+                      setTopic('');
                     }
                   }}
-                />
-                <View style={styles.topicInputActions}>
-                  <TouchableOpacity 
-                    onPress={() => {
-                      setShowTopicInput(false);
-                      setTopicInput('');
-                    }}
-                    style={styles.topicCancelBtn}
-                  >
-                    <Text style={styles.topicCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    onPress={() => {
-                      if (topicInput.trim()) {
-                        setTopic(topicInput.trim());
-                        setTopicInput('');
-                        setShowTopicInput(false);
-                      }
-                    }}
-                    style={[styles.topicAddBtn, !topicInput.trim() && styles.topicAddBtnDisabled]}
-                    disabled={!topicInput.trim()}
-                  >
-                    <Text style={styles.topicAddText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="create-outline"
+                    size={13}
+                    color={showCustomTopic ? Colors.white : Colors.primary}
+                  />
+                  <Text style={[styles.topicChipText, showCustomTopic && styles.topicChipTextActive]}>Custom</Text>
+                </TouchableOpacity>
               </View>
-            )}
+              {showCustomTopic ? (
+                <TextInput
+                  value={customTopic}
+                  onChangeText={setCustomTopic}
+                  style={styles.customTopicInput}
+                  placeholder="Name your topic…"
+                  placeholderTextColor={Colors.textTertiary}
+                  maxLength={30}
+                />
+              ) : null}
+            </View>
 
-            {submitting && (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.loadingText}>Posting...</Text>
-      </View>
-            )}
-            </ScrollView>
-          </View>
+            {/* Quick tickers */}
+            <View style={styles.block}>
+              <Text style={styles.blockLabel}>Tag a stock</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.tickerScroll}
+              >
+                {QUICK_TICKERS.map((symbol) => {
+                  const linked = detectedSymbols.includes(symbol);
+                  return (
+                    <TouchableOpacity
+                      key={symbol}
+                      style={[styles.tickerChip, linked && styles.tickerChipLinked]}
+                      onPress={() => insertTicker(symbol)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.tickerChipText, linked && styles.tickerChipTextLinked]}>${symbol}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </ScrollView>
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 };
@@ -223,230 +279,197 @@ const ComposeModal: React.FC<ComposeModalProps> = ({ visible, onClose, onPostCre
 export default ComposeModal;
 
 const styles = StyleSheet.create({
-  safeArea: {
+  root: {
     flex: 1,
     backgroundColor: Colors.background,
   },
-  keyboardView: {
+  flex: {
     flex: 1,
-  },
-  contentWrapper: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: Spacing.xl,
-    paddingBottom: Spacing.xxl,
-    flexGrow: 1,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.lg,
-    paddingBottom: Spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.background,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Glass.postBorder,
   },
-  cancelBtn: {
-    minWidth: 70,
-    paddingVertical: Spacing.xs,
-  },
-  cancelText: {
-    color: Colors.textPrimary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.semibold,
-  },
-  headerCenter: {
-    flexDirection: 'row',
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
-    gap: Spacing.md,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   headerTitle: {
     color: Colors.textPrimary,
-    fontSize: Typography.fontSize.xl,
+    fontSize: Typography.fontSize.md,
     fontWeight: Typography.fontWeight.bold,
   },
   postBtn: {
-    backgroundColor: Colors.backgroundTertiary,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
+    minWidth: 68,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
     borderRadius: BorderRadius.full,
-    minWidth: 90,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: Glass.postBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   postBtnActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+    backgroundColor: '#A78BFA',
+    borderColor: '#A78BFA',
     ...Shadows.small,
   },
-  postText: {
+  postBtnText: {
     color: Colors.textTertiary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.semibold,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.bold,
   },
-  postTextActive: {
+  postBtnTextActive: {
     color: Colors.white,
-    fontWeight: Typography.fontWeight.extrabold,
   },
-  postBtnDisabled: {
-    opacity: 0.4,
+  scrollContent: {
+    paddingBottom: Spacing.xxxl,
   },
-  topicContainer: {
-    marginBottom: Spacing.lg,
-  },
-  topicPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primary + '20',
-    borderWidth: 2,
-    borderColor: Colors.primary + '70',
-    borderRadius: BorderRadius.full,
+  composeBlock: {
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    alignSelf: 'flex-start',
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Glass.postBorder,
+  },
+  composeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: Spacing.md,
-    ...Shadows.medium,
   },
-  topicText: {
-    color: Colors.primary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.extrabold,
-    letterSpacing: 0.3,
+  composeMain: {
+    flex: 1,
+    minWidth: 0,
   },
-  topicRemove: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addTopicBtn: {
-    alignSelf: 'flex-start',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-    marginTop: Spacing.lg,
-    backgroundColor: Colors.primary,
-    borderWidth: 1.5,
-    borderColor: Colors.primary + '80',
-    borderRadius: BorderRadius.full,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    ...Shadows.medium,
-  },
-  addTopicText: {
-    color: Colors.white,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.extrabold,
-    letterSpacing: 0.3,
-  },
-  topicInputContainer: {
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.lg,
-  },
-  topicInputField: {
-    backgroundColor: Colors.backgroundSecondary,
-    borderWidth: 2,
-    borderColor: Colors.primary + '50',
-    borderRadius: BorderRadius.xl,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    color: Colors.textPrimary,
-    fontSize: Typography.fontSize.lg,
-    fontWeight: Typography.fontWeight.normal,
-    minHeight: 56,
-    marginBottom: Spacing.md,
-    textAlignVertical: 'center',
-    includeFontPadding: false,
-    ...Shadows.medium,
-  },
-  topicInputActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  topicCancelBtn: {
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-  },
-  topicCancelText: {
+  authorName: {
     color: Colors.textPrimary,
     fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.semibold,
-  },
-  topicAddBtn: {
-    backgroundColor: Colors.primary,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-    borderRadius: BorderRadius.full,
-    minWidth: 100,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadows.medium,
-  },
-  topicAddBtnDisabled: {
-    opacity: 0.4,
-    backgroundColor: Colors.backgroundTertiary,
-  },
-  topicAddText: {
-    color: Colors.white,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.extrabold,
-  },
-  contentContainer: {
-    marginBottom: Spacing.xl,
+    fontWeight: Typography.fontWeight.bold,
+    marginBottom: Spacing.sm,
   },
   contentInput: {
     color: Colors.textPrimary,
-    fontSize: Typography.fontSize.xxl,
-    fontWeight: Typography.fontWeight.normal,
-    minHeight: 150,
-    textAlignVertical: 'top',
-    lineHeight: 32,
-    backgroundColor: Colors.backgroundSecondary,
-    borderWidth: 2,
-    borderColor: Colors.primary + '40',
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
-    ...Shadows.small,
+    fontSize: Typography.fontSize.lg,
+    lineHeight: 26,
+    minHeight: 140,
+    padding: 0,
   },
-  charCountRow: {
+  composeMeta: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: Spacing.sm,
-    paddingRight: Spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.md,
+    marginLeft: 44 + Spacing.md,
+    gap: Spacing.sm,
   },
   charCount: {
     color: Colors.textTertiary,
-    fontSize: Typography.fontSize.sm,
+    fontSize: Typography.fontSize.xs,
     fontWeight: Typography.fontWeight.semibold,
-    letterSpacing: 0.5,
   },
-  charCountWarning: {
+  charCountWarn: {
     color: Colors.warning,
+  },
+  linkedRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 6,
+    flex: 1,
+  },
+  linkedPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.35)',
+  },
+  linkedPillText: {
+    color: Colors.success,
+    fontSize: Typography.fontSize.xs,
     fontWeight: Typography.fontWeight.bold,
   },
-  loadingContainer: {
+  block: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  blockLabel: {
+    color: Colors.textSecondary,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+  },
+  topicWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  topicChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    marginTop: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    gap: 4,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Glass.postBorder,
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
-  loadingText: {
-    color: Colors.textTertiary,
+  topicChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  topicChipText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.semibold,
+  },
+  topicChipTextActive: {
+    color: Colors.white,
+  },
+  customTopicInput: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: Glass.postBorder,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    color: Colors.textPrimary,
     fontSize: Typography.fontSize.md,
   },
+  tickerScroll: {
+    gap: Spacing.sm,
+    paddingRight: Spacing.lg,
+  },
+  tickerChip: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 9,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Glass.postBorder,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  tickerChipLinked: {
+    borderColor: Colors.success,
+    backgroundColor: 'rgba(16,185,129,0.1)',
+  },
+  tickerChipText: {
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSize.sm,
+    fontWeight: Typography.fontWeight.bold,
+  },
+  tickerChipTextLinked: {
+    color: Colors.success,
+  },
 });
-
-

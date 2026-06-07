@@ -19,6 +19,8 @@ import GroupDetailScreen from '../screens/GroupDetailScreen';
 type SocialTabProps = {
   uid: string;
   onViewUser?: (uid: string) => void;
+  activeGroupId?: string | null;
+  onActiveGroupChange?: (groupId: string | null) => void;
 };
 
 /** Consistent collapsible section card wrapper */
@@ -74,15 +76,30 @@ const cardStyles = StyleSheet.create({
   },
   body: {
     padding: Spacing.md,
+    minWidth: 0,
   },
 });
 
-const SocialTab: React.FC<SocialTabProps> = ({ uid, onViewUser }) => {
+const SocialTab: React.FC<SocialTabProps> = ({
+  uid,
+  onViewUser,
+  activeGroupId: controlledGroupId,
+  onActiveGroupChange,
+}) => {
   const [followerCount, setFollowerCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [countsLoading, setCountsLoading] = useState(true);
   const [followListMode, setFollowListMode] = useState<'followers' | 'following' | null>(null);
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [internalGroupId, setInternalGroupId] = useState<string | null>(null);
+
+  const activeGroupId = controlledGroupId !== undefined ? controlledGroupId : internalGroupId;
+  const setActiveGroupId = (groupId: string | null) => {
+    if (onActiveGroupChange) {
+      onActiveGroupChange(groupId);
+    } else {
+      setInternalGroupId(groupId);
+    }
+  };
 
   const loadCounts = useCallback(async () => {
     setCountsLoading(true);

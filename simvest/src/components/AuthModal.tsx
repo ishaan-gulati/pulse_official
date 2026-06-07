@@ -223,10 +223,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ visible, onClose, mode }) => {
         return (
           <>
             <Text style={styles.stepSubtitle}>Use your email and a secure password to sign in later.</Text>
+            <Text style={styles.fieldLabel}>Email</Text>
             <TextInput
               ref={signupEmailRef}
               style={inputStyle('email')}
-              placeholder="Email"
+              placeholder=""
               placeholderTextColor={Colors.textDisabled}
               autoCapitalize="none"
               keyboardType="email-address"
@@ -380,7 +381,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ visible, onClose, mode }) => {
                       <Text style={styles.fieldLabel}>Email</Text>
                       <TextInput
                         style={inputStyle('signinEmail')}
-                        placeholder="you@email.com"
+                        placeholder=""
                         placeholderTextColor={Colors.textDisabled}
                         autoCapitalize="none"
                         keyboardType="email-address"

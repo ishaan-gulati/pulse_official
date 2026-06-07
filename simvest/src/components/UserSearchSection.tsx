@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
@@ -24,6 +23,7 @@ import { friendService } from '../services/friendService';
 import { useAuth } from '../contexts/AuthContext';
 import { Colors, Spacing, BorderRadius, Typography, Glass } from '../constants/theme';
 import UserAvatar from './UserAvatar';
+import FlexTextInput from './FlexTextInput';
 import type { FriendStatus } from '../types';
 
 type UserSearchSectionProps = {
@@ -176,22 +176,28 @@ const UserSearchSection: React.FC<UserSearchSectionProps> = ({ onViewUser }) => 
   return (
     <View style={styles.container}>
       <View style={styles.inputWrap}>
-        <Ionicons name="search" size={16} color={Colors.textTertiary} />
-        <TextInput
+        <Ionicons name="search" size={16} color={Colors.textTertiary} style={styles.searchIcon} />
+        <FlexTextInput
           style={styles.input}
-          placeholder="Search by name or username…"
+          placeholder="Search people…"
           placeholderTextColor={Colors.textTertiary}
           value={queryText}
           onChangeText={handleChange}
           autoCapitalize="none"
           autoCorrect={false}
         />
-        {loading && <ActivityIndicator size="small" color={Colors.primary} />}
-        {!loading && queryText.length > 0 && (
-          <TouchableOpacity onPress={() => { setQueryText(''); setResults([]); }}>
+        {loading ? (
+          <View style={styles.trailingIcon}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+          </View>
+        ) : queryText.length > 0 ? (
+          <TouchableOpacity
+            style={styles.trailingIcon}
+            onPress={() => { setQueryText(''); setResults([]); }}
+          >
             <Ionicons name="close-circle" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
       {results.length > 0 && (
@@ -280,6 +286,7 @@ export default UserSearchSection;
 const styles = StyleSheet.create({
   container: {
     marginBottom: Spacing.xs,
+    minWidth: 0,
   },
   inputWrap: {
     flexDirection: 'row',
@@ -291,12 +298,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: 10,
     gap: Spacing.xs,
+    overflow: 'hidden',
+    minWidth: 0,
+    width: '100%',
+  },
+  searchIcon: {
+    flexShrink: 0,
+  },
+  trailingIcon: {
+    flexShrink: 0,
   },
   input: {
-    flex: 1,
     fontSize: Typography.fontSize.md,
     color: Colors.textPrimary,
-    padding: 0,
   },
   results: {
     marginTop: Spacing.sm,

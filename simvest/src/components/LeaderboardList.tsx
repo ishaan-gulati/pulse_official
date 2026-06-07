@@ -14,6 +14,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { LeaderboardEntry } from '../services/userService';
 import { Colors, Spacing, BorderRadius, Typography, Shadows, Glass } from '../constants/theme';
 import { formatCurrency, formatPercentage } from '../utils/formatters';
+import UserAvatar from './UserAvatar';
 
 type LeaderboardListProps = {
   entries: LeaderboardEntry[];
@@ -96,11 +97,12 @@ export const LeaderboardRow: React.FC<LeaderboardRowProps> = ({
     >
       <View style={styles.rankCol}>{renderRank(rank)}</View>
       <View style={styles.avatarCol}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {(item.displayName || item.username || '?').charAt(0).toUpperCase()}
-          </Text>
-        </View>
+        <UserAvatar
+          photoURL={item.photoURL}
+          displayName={item.displayName}
+          username={item.username}
+          size={38}
+        />
       </View>
       <View style={styles.infoCol}>
         <View style={styles.nameRow}>
@@ -271,19 +273,6 @@ const styles = StyleSheet.create({
   },
   avatarCol: {
     marginRight: Spacing.sm,
-  },
-  avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: Colors.primary + '25',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: Colors.primary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.bold,
   },
   infoCol: {
     flex: 1,

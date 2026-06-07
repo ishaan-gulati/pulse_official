@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet, AppState, AppStateStatus, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as SplashScreen from 'expo-splash-screen';
 import { stockPriceService } from './src/services/stockPriceService';
 import { resetFinnhubRateLimit } from './src/services/finnhubRateLimit';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -12,7 +13,7 @@ import SearchScreen from './src/screens/SearchScreen';
 import NotificationsScreen from './src/screens/NotificationsScreen';
 import PortfolioScreen from './src/screens/PortfolioScreen';
 import LeaderboardScreen from './src/screens/LeaderboardScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
+import ProfileScreen, { ProfileSubTab } from './src/screens/ProfileScreen';
 import UserProfileScreen from './src/screens/UserProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
@@ -45,6 +46,8 @@ const AppContent: React.FC = () => {
   const [homeRootKey, setHomeRootKey] = useState(0);
   const [searchRootKey, setSearchRootKey] = useState(0);
   const [profileRootKey, setProfileRootKey] = useState(0);
+  const [profileSubTab, setProfileSubTab] = useState<ProfileSubTab>('profile');
+  const [profileSocialGroupId, setProfileSocialGroupId] = useState<string | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const leaderboardListRef = useRef<FlatList | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
@@ -136,6 +139,8 @@ const AppContent: React.FC = () => {
       setViewingUserId(null);
       setShowSettings(false);
       setSearchSymbol(null);
+      setProfileSubTab('profile');
+      setProfileSocialGroupId(null);
     }
     prevUserRef.current = currentUid;
   }, [user?.uid]);
@@ -181,6 +186,8 @@ const AppContent: React.FC = () => {
         setSearchRootKey((k) => k + 1);
       } else if (tab === 'profile') {
         setShowSettings(false);
+        setProfileSubTab('profile');
+        setProfileSocialGroupId(null);
         setProfileRootKey((k) => k + 1); // refresh profile when already there
       } else if (tab === 'portfolio') {
         setPortfolioRootKey((k) => k + 1);
@@ -198,8 +205,34 @@ const AppContent: React.FC = () => {
     if (tab === 'leaderboard') scrollLeaderboardToTop();
   };
 
-  if (loading) {
-    return <View style={styles.loadingContainer} />;
+  const bootstrapReady = !loading && (!user || needsOnboarding !== null);
+
+  useEffect(() => {
+    if (bootstrapReady) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [bootstrapReady]);
+
+  const handlePostCreated = () => {
+    setRefreshKey((prev) => prev + 1);
+  };
+
+  /** Pull-to-refresh: clear caches, sync alerts/referrals, bump feed refresh key. */
+  const handleAppRefresh = React.useCallback(async () => {
+    resetFinnhubRateLimit();
+    stockPriceService.clearCache();
+    setRefreshKey((prev) => prev + 1);
+    setPriceAlertSyncKey((k) => k + 1);
+    if (user?.uid) {
+      await Promise.all([
+        referralService.processPendingReferralClaims(user.uid).catch(() => {}),
+        runPriceAlertsPoll(user.uid),
+      ]);
+    }
+  }, [user?.uid, runPriceAlertsPoll]);
+
+  if (!bootstrapReady) {
+    return null;
   }
 
   if (!user) {
@@ -209,11 +242,6 @@ const AppContent: React.FC = () => {
   if (needsOnboarding) {
     return <PostSignupOnboardingScreen onFinished={() => setNeedsOnboarding(false)} />;
   }
-
-  const handlePostCreated = () => {
-    // Trigger refresh of HomeScreen
-    setRefreshKey(prev => prev + 1);
-  };
 
   const handleNavigateToPost = (post: FeedPost) => {
     setSelectedPost(post);
@@ -261,6 +289,7 @@ const AppContent: React.FC = () => {
           <HomeScreen
             key={`home-${homeRootKey}`}
             refreshKey={refreshKey}
+            onAppRefresh={handleAppRefresh}
             onCompose={() => setComposeOpen(true)}
             onNavigateToAlerts={() => setActiveTab('alerts')}
             onNavigateToPost={handleNavigateToPost}
@@ -274,6 +303,7 @@ const AppContent: React.FC = () => {
           <SearchScreen
             key={`search-${searchRootKey}`}
             initialSymbol={searchSymbol || undefined}
+            onAppRefresh={handleAppRefresh}
           />
         );
       case 'leaderboard':
@@ -281,12 +311,14 @@ const AppContent: React.FC = () => {
           <LeaderboardScreen
             onViewUser={handleViewUser}
             listRef={leaderboardListRef}
+            onAppRefresh={handleAppRefresh}
           />
         );
       case 'portfolio':
         return (
           <PortfolioScreen
             key={`portfolio-${portfolioRootKey}`}
+            onAppRefresh={handleAppRefresh}
             onNavigateToProfile={() => setActiveTab('profile')}
             onNavigateToStock={handleNavigateToStock}
           />
@@ -298,9 +330,14 @@ const AppContent: React.FC = () => {
         return (
           <ProfileScreen
             key={`profile-${profileRootKey}`}
+            onAppRefresh={handleAppRefresh}
             onOpenSettings={() => setShowSettings(true)}
             onViewUser={handleViewUser}
             pendingFriendRequests={pendingFriendRequests}
+            activeTab={profileSubTab}
+            onTabChange={setProfileSubTab}
+            socialGroupId={profileSocialGroupId}
+            onSocialGroupChange={setProfileSocialGroupId}
           />
         );
       case 'alerts':

@@ -45,6 +45,12 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const flatRef = useRef<FlatList>(null);
+  const messagesUnsubRef = useRef<(() => void) | null>(null);
+
+  const stopMessagesListener = useCallback(() => {
+    messagesUnsubRef.current?.();
+    messagesUnsubRef.current = null;
+  }, []);
 
   const loadGroup = useCallback(async () => {
     if (!user?.uid) return;
@@ -70,18 +76,35 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
       setMessages(msgs);
       setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 100);
     });
-    return () => unsub();
+    messagesUnsubRef.current = unsub;
+    return () => {
+      messagesUnsubRef.current = null;
+      unsub();
+    };
   }, [groupId]);
 
-  // Load leaderboard lazily
   useEffect(() => {
-    if (tab !== 'leaderboard') return;
+    setLeaderboard([]);
+    setLeaderboardLoading(false);
+  }, [groupId]);
+
+  // Prefetch group leaderboard as soon as members are known (not only when tab opens)
+  useEffect(() => {
+    if (!group?.members?.length) return;
+    let cancelled = false;
     setLeaderboardLoading(true);
-    groupService.getGroupLeaderboard(groupId)
-      .then(setLeaderboard)
+    groupService.getGroupLeaderboard(groupId, group.members)
+      .then((data) => {
+        if (!cancelled) setLeaderboard(data);
+      })
       .catch(() => {})
-      .finally(() => setLeaderboardLoading(false));
-  }, [tab, groupId]);
+      .finally(() => {
+        if (!cancelled) setLeaderboardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId, group?.members]);
 
   const handleSend = async () => {
     if (!user?.uid || !inputText.trim()) return;
@@ -90,7 +113,14 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
     setInputText('');
     try {
       const profile = await userService.getUserProfile(user.uid);
-      await groupService.sendMessage(groupId, user.uid, text, profile?.displayName, profile?.username);
+      await groupService.sendMessage(
+        groupId,
+        user.uid,
+        text,
+        profile?.displayName,
+        profile?.username,
+        profile?.photoURL
+      );
     } finally {
       setSending(false);
     }
@@ -111,6 +141,7 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
   const handleLeaveGroup = async () => {
     if (!user?.uid || actionLoading) return;
     setActionLoading(true);
+    stopMessagesListener();
     try {
       await groupService.leaveGroup(groupId, user.uid);
       onBack();
@@ -124,6 +155,7 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
   const handleDeleteGroup = async () => {
     if (!user?.uid || actionLoading) return;
     setActionLoading(true);
+    stopMessagesListener();
     try {
       await groupService.deleteGroup(groupId, user.uid);
       onBack();
@@ -265,12 +297,30 @@ const GroupDetailScreen: React.FC<GroupDetailScreenProps> = ({ groupId, onBack, 
             contentContainerStyle={styles.messageList}
             renderItem={({ item }) => {
               const isMe = item.userId === user?.uid;
+              const memberPhoto = members.find((m) => m.uid === item.userId)?.photoURL;
+              const photoURL = item.photoURL || memberPhoto;
+
+              if (isMe) {
+                return (
+                  <View style={[styles.bubble, styles.bubbleMe]}>
+                    <Text style={[styles.bubbleText, styles.bubbleTextMe]}>{item.text}</Text>
+                  </View>
+                );
+              }
+
               return (
-                <View style={[styles.bubble, isMe && styles.bubbleMe]}>
-                  {!isMe && (
+                <View style={styles.incomingRow}>
+                  <UserAvatar
+                    photoURL={photoURL}
+                    displayName={item.displayName}
+                    username={item.username}
+                    size={28}
+                    style={styles.chatAvatar}
+                  />
+                  <View style={styles.bubble}>
                     <Text style={styles.bubbleSender}>{item.displayName || item.username || 'User'}</Text>
-                  )}
-                  <Text style={[styles.bubbleText, isMe && styles.bubbleTextMe]}>{item.text}</Text>
+                    <Text style={styles.bubbleText}>{item.text}</Text>
+                  </View>
                 </View>
               );
             }}
@@ -529,6 +579,15 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     gap: Spacing.sm,
     paddingBottom: Spacing.xl,
+  },
+  incomingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Spacing.xs,
+    maxWidth: '85%',
+  },
+  chatAvatar: {
+    marginBottom: 2,
   },
   bubble: {
     alignSelf: 'flex-start',

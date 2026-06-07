@@ -207,6 +207,13 @@ service cloud.firestore {
       allow list: if false;
       allow create, update, delete: if false;
     }
+
+    // AI stock explain cache (24h TTL per symbol). Any signed-in user can read/write cache entries.
+    match /aiCache/{docId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
+    }
     
     // Default: deny all other access
     match /{document=**} {

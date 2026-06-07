@@ -153,6 +153,7 @@ export interface GroupMessage {
   /** Display name of sender (denormalized) */
   displayName?: string;
   username?: string;
+  photoURL?: string;
   text: string;
   createdAt: any;
 }

@@ -33,22 +33,31 @@ import {
   getXPHelpMessage,
 } from '../services/gamificationService';
 
-type ProfileTab = 'profile' | 'stats' | 'social';
+export type ProfileSubTab = 'profile' | 'stats' | 'social';
 
 type ProfileScreenProps = {
+  onAppRefresh?: () => Promise<void>;
   onOpenSettings?: () => void;
   onViewUser?: (uid: string) => void;
   pendingFriendRequests?: number;
+  activeTab: ProfileSubTab;
+  onTabChange: (tab: ProfileSubTab) => void;
+  socialGroupId?: string | null;
+  onSocialGroupChange?: (groupId: string | null) => void;
 };
 
 const ProfileScreen: React.FC<ProfileScreenProps> = ({
+  onAppRefresh,
   onOpenSettings,
   onViewUser,
   pendingFriendRequests = 0,
+  activeTab,
+  onTabChange,
+  socialGroupId = null,
+  onSocialGroupChange,
 }) => {
   const { user } = useAuth();
   const isMountedRef = useRef(true);
-  const [activeTab, setActiveTab] = useState<ProfileTab>('profile');
   const scrollRef = useRef<ScrollView>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -154,8 +163,9 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   }, [activeTab]);
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
+    await onAppRefresh?.();
     fetchProfileData();
   };
 
@@ -329,21 +339,21 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'profile' && styles.tabActive]}
-          onPress={() => setActiveTab('profile')}
+          onPress={() => onTabChange('profile')}
           activeOpacity={0.7}
         >
           <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>Profile</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'stats' && styles.tabActive]}
-          onPress={() => setActiveTab('stats')}
+          onPress={() => onTabChange('stats')}
           activeOpacity={0.7}
         >
           <Text style={[styles.tabText, activeTab === 'stats' && styles.tabTextActive]}>Stats</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'social' && styles.tabActive]}
-          onPress={() => setActiveTab('social')}
+          onPress={() => onTabChange('social')}
           activeOpacity={0.7}
         >
           <View style={styles.tabLabelRow}>
@@ -544,7 +554,12 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </View>
         </ScrollView>
       ) : activeTab === 'social' && user ? (
-        <SocialTab uid={user.uid} onViewUser={onViewUser} />
+        <SocialTab
+          uid={user.uid}
+          onViewUser={onViewUser}
+          activeGroupId={socialGroupId}
+          onActiveGroupChange={onSocialGroupChange}
+        />
       ) : null}
     </View>
   );
@@ -576,13 +591,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    paddingHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
   },
   tab: {
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    marginRight: Spacing.md,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },

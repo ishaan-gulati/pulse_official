@@ -6,7 +6,6 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
-  TextInput,
   Modal,
   Alert,
   Platform,
@@ -30,6 +29,7 @@ import AIExplainModal, { AIExplainStatus } from '../components/AIExplainModal';
 import { explainPortfolio } from '../services/aiExplainService';
 import { AI_EXPLAIN_ERRORS } from '../services/aiExplainService';
 import TradeModal from '../components/TradeModal';
+import FlexTextInput from '../components/FlexTextInput';
 
 type PortfolioTab = 'overview' | 'holdings' | 'history' | 'performance';
 type HoldingsFilter = 'all' | 'gainers' | 'losers';
@@ -43,6 +43,7 @@ type TradeModalState = {
 };
 
 type PortfolioScreenProps = {
+  onAppRefresh?: () => Promise<void>;
   onNavigateToProfile?: () => void;
   onNavigateToStock?: (symbol: string) => void;
 };
@@ -147,13 +148,13 @@ function PortfolioSkeleton() {
         <View style={[styles.section, { marginTop: 28 }]}>
           <Bone style={{ width: 100, height: 16, borderRadius: 4, marginBottom: 14 }} />
           {[0, 1, 2].map((i) => (
-            <View key={i} style={[styles.topPositionCard, { borderColor: Colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Bone style={{ width: 48, height: 16, borderRadius: 4, marginBottom: 6 }} />
-                <Bone style={{ width: 64, height: 12, borderRadius: 3 }} />
+            <View key={i} style={styles.holdingCardCompact}>
+              <View style={styles.holdingCardTop}>
+                <Bone style={{ width: 48, height: 16, borderRadius: 4 }} />
+                <Bone style={{ width: 72, height: 16, borderRadius: 4 }} />
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Bone style={{ width: 72, height: 16, borderRadius: 4, marginBottom: 6 }} />
+              <View style={styles.holdingCardSubRowCompact}>
+                <Bone style={{ width: 64, height: 12, borderRadius: 3 }} />
                 <Bone style={{ width: 88, height: 12, borderRadius: 3 }} />
               </View>
             </View>
@@ -176,7 +177,7 @@ function tradeMatchesPeriod(timestamp: any, period: HistoryPeriod): boolean {
   return true;
 }
 
-const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onNavigateToProfile, onNavigateToStock }) => {
+const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onAppRefresh, onNavigateToProfile, onNavigateToStock }) => {
   const { user } = useAuth();
   const isMountedRef = useRef(true);
   const [loading, setLoading] = useState(true);
@@ -455,7 +456,17 @@ const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onNavigateToProfile, 
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchPortfolio(true)} tintColor={Colors.primary} colors={[Colors.primary]} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={async () => {
+              await onAppRefresh?.();
+              fetchPortfolio(true);
+            }}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
+        }
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -497,28 +508,30 @@ const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onNavigateToProfile, 
             </View>
 
             {positions.length > 0 && (
-              <View style={[styles.section, { marginTop: 28 }]}>
-                <Text style={[styles.sectionTitle, { marginBottom: 14 }]}>Top Positions</Text>
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { marginBottom: Spacing.sm }]}>Top Positions</Text>
                 {[...positions].sort((a, b) => b.totalValue - a.totalValue).slice(0, 5).map((pos) => {
+                  const dayPnL = pos.previousClose != null && pos.previousClose > 0
+                    ? (pos.currentPrice - pos.previousClose) * pos.shares
+                    : 0;
                   const dayPct = pos.previousClose != null && pos.previousClose > 0
-                    ? ((pos.currentPrice - pos.previousClose) / pos.previousClose) * 100 : 0;
-                  const dayChange = pos.previousClose != null && pos.previousClose > 0
-                    ? pos.currentPrice - pos.previousClose : 0;
+                    ? ((pos.currentPrice - pos.previousClose) / pos.previousClose) * 100
+                    : 0;
                   return (
                     <TouchableOpacity
                       key={pos.symbol}
-                      style={styles.topPositionCard}
+                      style={styles.holdingCardCompact}
                       onPress={() => onNavigateToStock?.(pos.symbol)}
-                      activeOpacity={0.8}
+                      activeOpacity={0.85}
                     >
-                      <View style={styles.topPositionLeft}>
-                        <Text style={styles.topPositionSymbol}>{pos.symbol}</Text>
-                        <Text style={styles.topPositionShares}>{pos.shares} shares</Text>
+                      <View style={styles.holdingCardTop}>
+                        <Text style={styles.holdingCardSymbol}>{pos.symbol}</Text>
+                        <Text style={styles.holdingCardValue}>{formatCurrency(pos.totalValue)}</Text>
                       </View>
-                      <View style={styles.topPositionRight}>
-                        <Text style={styles.topPositionValue}>{formatCurrency(pos.currentPrice)}</Text>
-                        <Text style={[styles.topPositionDay, { color: dayPct >= 0 ? Colors.success : Colors.error }]}>
-                          {dayChange >= 0 ? '+' : ''}{formatCurrency(dayChange)} ({dayPct >= 0 ? '+' : ''}{dayPct.toFixed(2)}%)
+                      <View style={styles.holdingCardSubRowCompact}>
+                        <Text style={styles.holdingCardShares}>{pos.shares} shares</Text>
+                        <Text style={[styles.holdingCardDay, { color: dayPnL >= 0 ? Colors.success : Colors.error }]}>
+                          {dayPnL >= 0 ? '+' : ''}{formatCurrency(dayPnL)} ({formatPercentage(dayPct, true)})
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -624,8 +637,8 @@ const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onNavigateToProfile, 
         {activeTab === 'history' && (
           <>
             <View style={styles.searchBar}>
-              <Ionicons name="search" size={16} color={Colors.textTertiary} />
-              <TextInput
+              <Ionicons name="search" size={16} color={Colors.textTertiary} style={styles.searchBarIcon} />
+              <FlexTextInput
                 style={styles.searchInput}
                 placeholder="Search by symbol..."
                 placeholderTextColor={Colors.textTertiary}
@@ -703,7 +716,11 @@ const PortfolioScreen: React.FC<PortfolioScreenProps> = ({ onNavigateToProfile, 
             />
             <MetricCard
               label="Best Return"
-              value={bestPosition ? `+${bestPosition.returnPercentage.toFixed(1)}%` : 'N/A'}
+              value={
+                bestPosition
+                  ? `${bestPosition.returnPercentage >= 0 ? '+' : ''}${bestPosition.returnPercentage.toFixed(1)}%`
+                  : 'N/A'
+              }
               color={bestPosition && bestPosition.returnPercentage >= 0 ? Colors.success : Colors.error}
               icon="trending-up"
               subLabel={bestPosition?.symbol}
@@ -1065,77 +1082,21 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // ── Top positions list ────────────────────────────────────────────────────
-  listCard: {
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  topPositionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.md,
-  },
-  topPositionLeft: {},
-  topPositionRight: { alignItems: 'flex-end' },
-  holdingSymbol: {
-    color: Colors.textPrimary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.bold,
-  },
-  holdingShares: {
-    color: Colors.textTertiary,
-    fontSize: Typography.fontSize.sm,
-    marginTop: 2,
-  },
-  holdingValue: {
-    color: Colors.textPrimary,
-    fontSize: Typography.fontSize.md,
-    fontWeight: Typography.fontWeight.bold,
-  },
-  holdingReturn: {
-    fontSize: Typography.fontSize.sm,
-    fontWeight: Typography.fontWeight.semibold,
-    marginTop: 2,
-  },
-  rowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.border },
-
-  // ── Top positions cards ───────────────────────────────────────────────────
-  topPositionCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#090D12',
-    borderRadius: 10,
-    paddingVertical: 14,
+  // ── Top positions (overview) ───────────────────────────────────────────────
+  holdingCardCompact: {
+    backgroundColor: Glass.fillSubtle,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Glass.postBorder,
+    borderRadius: 14,
+    marginBottom: 10,
+    paddingTop: 14,
     paddingHorizontal: 16,
-    marginBottom: 8,
+    paddingBottom: 12,
   },
-  topPositionSymbol: {
-    color: '#E2E8F0',
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  topPositionShares: {
-    color: '#9AA4B2',
-    fontSize: 13,
-  },
-  topPositionValue: {
-    color: '#E2E8F0',
-    fontSize: 16,
-    fontWeight: '700',
-    textAlign: 'right',
-    marginBottom: 4,
-  },
-  topPositionDay: {
-    fontSize: 13,
-    fontWeight: '500',
-    textAlign: 'right',
+  holdingCardSubRowCompact: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
 
   // ── Holdings tab ──────────────────────────────────────────────────────────
@@ -1271,12 +1232,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 14,
+    overflow: 'hidden',
+    minWidth: 0,
+  },
+  searchBarIcon: {
+    flexShrink: 0,
   },
   searchInput: {
-    flex: 1,
     color: '#E2E8F0',
     fontSize: 15,
-    paddingVertical: 0,
   },
   periodFilters: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   periodChip: {

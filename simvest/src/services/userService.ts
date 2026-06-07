@@ -147,6 +147,7 @@ export interface LeaderboardEntry {
   uid: string;
   username: string;
   displayName: string;
+  photoURL?: string;
   totalReturn: number;
   totalPortfolioValue: number;
   rank: number;
@@ -687,6 +688,35 @@ class UserService {
     }, 0);
   }
 
+  /** Leaderboard for a fixed set of users (e.g. group members) — parallel profile reads, no global scan. */
+  async getLeaderboardForUsers(uids: string[]): Promise<LeaderboardEntry[]> {
+    const unique = [...new Set(uids.filter(Boolean))];
+    if (unique.length === 0) return [];
+
+    const profiles = await Promise.all(unique.map((uid) => this.getUserProfile(uid)));
+    const leaderboard: LeaderboardEntry[] = [];
+
+    for (const userData of profiles) {
+      if (!userData) continue;
+      leaderboard.push({
+        uid: userData.uid,
+        username: userData.username,
+        displayName: userData.displayName,
+        photoURL: userData.photoURL,
+        totalReturn: userData.totalReturn ?? 0,
+        totalPortfolioValue: userData.totalPortfolioValue ?? 0,
+        rank: 0,
+        lastUpdated: userData.lastLoginAt,
+        tags: userData.tags ?? [],
+        customBadges: userData.customBadges,
+      });
+    }
+
+    leaderboard.sort((a, b) => b.totalPortfolioValue - a.totalPortfolioValue);
+    leaderboard.forEach((entry, i) => { entry.rank = i + 1; });
+    return leaderboard;
+  }
+
   // Get leaderboard - ranked by portfolio value (total money)
   async getLeaderboard(limit: number = LEADERBOARD_LIMIT): Promise<LeaderboardEntry[]> {
     const usersRef = collection(db, 'users');
@@ -701,6 +731,7 @@ class UserService {
           uid: userData.uid,
           username: userData.username,
           displayName: userData.displayName,
+          photoURL: userData.photoURL,
           totalReturn: userData.totalReturn ?? 0,
           totalPortfolioValue: userData.totalPortfolioValue ?? 0,
           rank: 0,
