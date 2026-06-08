@@ -7,23 +7,28 @@ service cloud.firestore {
   }
 
   match /databases/{database}/documents {
-    // Username → email for email/password sign-in before the user is authenticated.
-    // Document ID = lowercase trimmed username; only { uid, email, username }.
+    // Username → email for sign-in before auth. Doc ID = normalized username; no list.
     match /loginUsernames/{usernameKey} {
       allow get: if true;
       allow list: if false;
       allow create, update: if request.auth != null
         && request.resource.data.uid == request.auth.uid
         && request.auth.token.email != null
-        && request.resource.data.email == request.auth.token.email;
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'username']);
       allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
-    // Users can read and write their own profile
+    // User profiles — email must not be stored here (Auth + loginUsernames only).
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      // Allow reading other users' public profile data for leaderboard
       allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(['email']);
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(['email']);
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
     
     // Portfolio - PUBLIC: anyone can read, users can write their own
