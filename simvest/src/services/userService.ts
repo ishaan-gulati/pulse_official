@@ -77,7 +77,8 @@ export interface UserProfile {
   /** Normalized handle for username sign-in (lowercase, no @). Optional on legacy profiles until next profile write or backfill. */
   loginUsernameKey?: string;
   displayName: string; // Full name
-  email: string;
+  /** Not stored in Firestore — use Firebase Auth for the signed-in user's email. */
+  email?: string;
   password?: string; // Optional: store hashed password if needed
   photoURL?: string;
   bio?: string;
@@ -182,24 +183,28 @@ class UserService {
   }
 
   /**
-   * Writes /loginUsernames/{normalized} so username sign-in works while logged out.
-   * Safe to call after any successful sign-in to backfill older accounts.
+   * Writes /loginUsernames/{normalized} for username sign-in and strips email from the public profile.
+   * Pass auth email from Firebase Auth — it is not stored on users/{uid}.
    */
-  async syncLoginUsernameLookup(uid: string): Promise<void> {
+  async syncLoginUsernameLookup(uid: string, authEmail?: string | null): Promise<void> {
     const profile = await this.getUserProfile(uid);
-    if (!profile?.username || !profile.email?.includes('@')) return;
+    if (!profile?.username) return;
+    const email = typeof authEmail === 'string' ? authEmail.trim() : '';
+    if (!email.includes('@')) return;
     const key = this.normalizeLoginUsername(profile.username);
     if (!key) return;
-    await setDoc(
+    const batch = writeBatch(db);
+    batch.set(
       doc(db, LOGIN_USERNAMES_COLLECTION, key),
-      { uid, email: profile.email.trim(), username: profile.username },
+      { uid, email, username: profile.username },
       { merge: true }
     );
-    try {
-      await updateDoc(doc(db, 'users', uid), { loginUsernameKey: key });
-    } catch {
-      // best-effort
-    }
+    batch.set(
+      doc(db, 'users', uid),
+      { loginUsernameKey: key, email: deleteField() },
+      { merge: true }
+    );
+    await batch.commit();
   }
 
   // Create or update user profile
@@ -225,7 +230,6 @@ class UserService {
         username,
         loginUsernameKey: loginKey || undefined,
         displayName: userData.displayName || '',
-        email: userData.email || '',
         photoURL: userData.photoURL || undefined,
         bio: userData.bio || '',
         createdAt: serverTimestamp(),
@@ -306,6 +310,8 @@ class UserService {
         ...updates,
         ...keyPatch,
         lastLoginAt: serverTimestamp(),
+        // Never keep email on the public profile doc (Auth is source of truth).
+        email: deleteField(),
       };
       if ('photoURL' in updates && !updates.photoURL) {
         patch.photoURL = deleteField();

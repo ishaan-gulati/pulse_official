@@ -102,7 +102,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const credentialEmail = email.trim().toLowerCase();
       const result = await signInWithEmailAndPassword(auth, credentialEmail, password);
 
-      userService.syncLoginUsernameLookup(result.user.uid).catch(() => {});
+      try {
+        await userService.syncLoginUsernameLookup(result.user.uid, result.user.email);
+      } catch {
+        // Username lookup backfill is best-effort
+      }
 
       referralService.getReferralCode(result.user.uid).catch(() => {});
 

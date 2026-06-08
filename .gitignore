@@ -1,7 +1,10 @@
-node_modules/
-
 # Firebase Admin service account keys — never commit
 *-firebase-adminsdk-*.json
 serviceAccount*.json
+
+# Local env / secrets
 .env
 .env*.local
+
+# macOS
+.DS_Store

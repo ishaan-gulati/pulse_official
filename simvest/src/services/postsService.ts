@@ -596,7 +596,7 @@ class PostsService {
         postId,
         reporterId,
         reporterHandle: profile?.username ?? '',
-        reporterEmail: profile?.email ?? '',
+        reporterEmail: auth.currentUser?.email ?? '',
         createdAt: serverTimestamp(),
         reason: reason ?? null,
       });
