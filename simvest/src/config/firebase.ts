@@ -4,15 +4,15 @@ import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-// Your Firebase configuration
+// Firebase client config — from .env (EXPO_PUBLIC_*). Never commit real values to git.
 const firebaseConfig = {
-  apiKey: "AIzaSyBXgM-_AQsvPJ8Obvj6k-JPw2ZD2Fwjt5o",
-  authDomain: "pulse-app-real.firebaseapp.com",
-  projectId: "pulse-app-real",
-  storageBucket: "pulse-app-real.firebasestorage.app",
-  messagingSenderId: "733574590887",
-  appId: "1:733574590887:web:6652e90dec8ce32a85c682",
-  measurementId: "G-Z4M6GKZMB2"
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID ?? '',
 };
 
 const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
