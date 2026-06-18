@@ -1,6 +1,6 @@
 {
   "name": "pulse",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -11,7 +11,8 @@
     "backfill:login-usernames:dry": "DRY_RUN=1 node ./scripts/backfillLoginUsernames.mjs",
     "deploy:firestore-rules": "npx --yes firebase-tools deploy --only firestore:rules",
     "reset:referral-stats": "node ./scripts/resetReferralStats.mjs",
-    "revoke:all-sessions": "node ./scripts/revokeAllRefreshTokens.mjs"
+    "revoke:all-sessions": "node ./scripts/revokeAllRefreshTokens.mjs",
+    "export:users": "node ./scripts/exportAuthUsers.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

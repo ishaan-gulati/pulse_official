@@ -38,5 +38,9 @@ yarn-error.*
 *-firebase-adminsdk-*.json
 serviceAccount*.json
 
+# Auth user exports (never commit)
+pulse-auth-users*.csv
+auth-users-export*.csv
+
 # typescript
 *.tsbuildinfo
