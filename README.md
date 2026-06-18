@@ -1,98 +1,61 @@
-# 📈 Pulse — Social Paper Trading
+# Pulse — Social Paper Trading
 
 **Gamified investing, made social.**
 
-Pulse is an iOS app that lets you trade stocks with virtual money, compete with friends, and actually learn how the market works — without risking real cash. Built with React Native + Expo, live market data, and a leaderboard-driven social layer.
+Pulse is a mobile app for paper trading with virtual money, live market data, leaderboards, and a social feed — learn how markets work without risking real cash.
 
 [![App Store](https://img.shields.io/badge/App_Store-Download-blue?logo=apple)](https://apps.apple.com/us/app/pulse-social-paper-trading/id6760734269)
 
 ---
 
-## 🚀 What It Does
+## Highlights
 
-- **Paper trade** any stock in real-time with a virtual $10,000 portfolio
-- **Leaderboard** — see how your returns stack up against other users
-- **Social feed** — follow friends, react to trades, share plays
-- **Portfolio analytics** — track P&L, holdings breakdown, and performance over time
-- **Gamified XP system** — earn points for trades, streaks, and hitting milestones
+- **Paper trade** with a $10,000 virtual portfolio and live quotes
+- **Leaderboard** ranked by portfolio return
+- **Social feed** — post ideas, tag tickers, follow friends, join groups
+- **Portfolio analytics** — P/L, charts, price alerts, and AI stock summaries
+- **XP & achievements** — level up as you trade and hit milestones
+- **Referrals** — invite friends for bonus virtual cash
 
 ---
 
-## 🛠 Tech Stack
+## Tech stack
 
 | Layer | Tech |
-|---|---|
-| Frontend | React Native + Expo |
-| Backend / Auth | Firebase (Firestore, Auth, Storage) |
-| Market Data | Polygon.io API |
-| Deployment | EAS Build → App Store |
+|-------|------|
+| App | React Native, Expo SDK 54, TypeScript |
+| Backend | Firebase Auth, Cloud Firestore, Cloud Functions |
+| Market data | Yahoo Finance (quotes), Finnhub / Alpha Vantage / FMP (optional) |
+| AI | Groq (optional) |
+| Release | EAS Build → App Store |
 
 ---
 
-## 📱 Screenshots
+## Getting started
 
-> Coming soon — see the live app on the [App Store](https://apps.apple.com/us/app/pulse-social-paper-trading/id6760734269)
+The app lives in **`simvest/`**. See **[simvest/README.md](./simvest/README.md)** for full setup: environment variables, Firebase config, Firestore rules, admin scripts, and project structure.
 
----
-
-## 🏗 Getting Started
-
-### Prerequisites
-- Node.js 18+
-- Expo CLI (`npm install -g expo-cli`)
-- A Firebase project with Firestore + Auth enabled
-- A Polygon.io API key
-
-### Install & Run
+Quick start:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/pulse.git
-cd pulse
+git clone https://github.com/ishaan-gulati/pulse_official.git
+cd pulse_official/simvest
+cp .env.example .env   # fill in Firebase + optional API keys
 npm install
+npm start
 ```
-
-Create a `.env` file in the root:
-
-```
-EXPO_PUBLIC_FIREBASE_API_KEY=your_key
-EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your_domain
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-EXPO_PUBLIC_POLYGON_API_KEY=your_polygon_key
-```
-
-Then start the dev server:
-
-```bash
-npx expo start
-```
-
-Scan the QR code with Expo Go (iOS/Android) or run on a simulator.
 
 ---
 
-## 🗺 Roadmap
+## About
 
-- [x] Core paper trading engine
-- [x] Real-time leaderboard
-- [x] App Store launch
-- [ ] Friends / following system
-- [ ] Group portfolios & challenges
-- [ ] Profile pictures & customization
-- [ ] Push notifications for price alerts
+Built by **Ishaan Gulati**.
 
----
-
-## 👤 About
-
-Built by **Ishaan** — high school developer and investor.
-
-- App: [apps.apple.com/us/app/pulse-social-paper-trading/id6760734269](https://apps.apple.com/us/app/pulse-social-paper-trading/id6760734269)
+- App: [App Store](https://apps.apple.com/us/app/pulse-social-paper-trading/id6760734269)
 - Instagram: [@investingwithishaan](https://instagram.com/investingwithishaan)
 
-Made as part of **Hack Club Stardance** 🚀
-
 ---
 
-## 📄 License
+## License
 
 MIT
